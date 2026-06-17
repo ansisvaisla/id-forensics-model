@@ -1,0 +1,250 @@
+# ID Forensics Model
+
+Multi-stage forensic pipeline for ID document verification (FRAUD-1045).
+Detects spoofed, replayed, injected, or tampered ID photos submitted by loan applicants.
+Initial target: **Kenyan National IDs** (Legacy, Maisha, Huduma, Passport).
+
+---
+
+## Pipeline stages
+
+| Stage | Module | Description | Status |
+|-------|--------|-------------|--------|
+| 1 | `id_crop/` | YOLOv8-OBB corner detection → `warpPerspective` deskew | Trained (mAP50 0.995) |
+| 2 | `presentation_attack/` | Screen replay detection (EfficientNet-B0) | Trained (test F1 0.897) |
+| 3 | `tampering_detection/` | ELA + EXIF metadata analysis | Algorithmic v1 |
+| 4 | `id_type/` | ID type classification (Legacy / Maisha / Passport…) | Stub — needs more labels |
+| 5 | `field_extractor/` | AWS Textract OCR + position-based field parser | Needs AWS credentials |
+| 7 | `orchestration/` | Decision matrix, shadow-mode wrapper, risk tiers | Complete |
+
+---
+
+## Quick start
+
+### Prerequisites
+
+- Python 3.13
+- CUDA GPU optional (CPU works; GPU ~5× faster for training)
+
+### 1 — Clone and create virtual environment
+
+```bash
+git clone <repo-url>
+cd id-forensics-model
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# macOS / Linux
+source venv/bin/activate
+```
+
+### 2 — Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3 — Configure environment
+
+```bash
+cp .env.example .env
+# Edit .env with your AWS credentials and database connection string
+```
+
+`.env` variables needed:
+
+```
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=       # only for SSO / temporary credentials
+AWS_DEFAULT_REGION=af-south-1
+S3_BUCKET=sf-zenka-ke-prod-media-svc
+
+DB_HOST=
+DB_PORT=5432
+DB_NAME=
+DB_USER=
+DB_PASSWORD=
+```
+
+### 4 — Run the pipeline on one image
+
+```python
+from orchestration import run
+
+with open("path/to/id.jpg", "rb") as f:
+    result = run(f.read())
+
+print(result.is_screen_replay, result.risk_tier)
+```
+
+---
+
+## Model weights
+
+Weights are **not committed** (large binaries). See [`models/README.md`](models/README.md) for
+artifact locations and training commands.
+
+| Model | Path | Size |
+|-------|------|------|
+| Stage 1 corners | `models/stage1_corners/weights/best.pt` | 6.3 MB |
+| Stage 2 screen | `models/stage2_screen/best.pt` | 15.6 MB |
+
+Download from the shared drive / S3 artifact bucket and place at the paths above.
+
+---
+
+## Training
+
+### Stage 1 — Corner detector (YOLOv8-OBB)
+
+```bash
+python scripts/training/train_stage1_corners.py
+```
+
+Expects dataset at `data/yolo/corners/` (train/val/test splits).
+To regenerate from Label Studio export:
+
+```bash
+python scripts/convert_labels_to_yolo.py
+python scripts/split_yolo_dataset.py
+```
+
+### Stage 2 — Screen classifier (EfficientNet-B0)
+
+```bash
+python scripts/training/train_stage2_screen.py
+# No GPU / behind a firewall? Use:
+python scripts/training/train_stage2_screen.py --no-pretrained
+```
+
+Expects dataset at `data/yolo/screen/` (train/val/test splits, label 0=screen 1=live).
+
+---
+
+## Evaluation
+
+```bash
+# Both models
+python scripts/evaluate_models.py
+
+# One stage at a time
+python scripts/evaluate_models.py --stage screen
+python scripts/evaluate_models.py --stage corners
+```
+
+Outputs written to `data/eval/`:
+
+| File | Contents |
+|------|----------|
+| `screen_metrics.json` | Precision, recall, F1, confusion matrix, threshold sweep |
+| `screen_misclassified.csv` | Filenames + scores for wrong predictions |
+| `screen_viz/` | Annotated thumbnails — green border = correct, red = wrong |
+| `corners_metrics.json` | Mean distance error, % within 5% tolerance |
+| `corners_viz/` | Overlay images (green = true corners, red = predicted) |
+
+---
+
+## Smoke test
+
+```bash
+python scripts/smoke_test_pipeline.py
+# More images per category:
+python scripts/smoke_test_pipeline.py --n 10
+```
+
+Runs `orchestration.run()` on known screen / good_front / garbage images and writes
+`data/eval/smoke_report.json`.
+
+---
+
+## Tests
+
+```bash
+pytest tests/ -v
+```
+
+---
+
+## Iterative improvement workflow
+
+```
+Label more images in Label Studio
+        ↓
+Export  →  data/labels/label_studio_export.json
+        ↓
+python scripts/convert_labels_to_yolo.py    # regenerate YOLO labels
+python scripts/split_yolo_dataset.py         # rebuild splits
+        ↓
+python scripts/training/train_stage2_screen.py   # retrain
+        ↓
+python scripts/evaluate_models.py               # check test metrics
+        ↓
+Open data/eval/screen_viz/  in Explorer        # eyeball all 71 thumbnails
+Check  data/eval/screen_misclassified.csv       # find patterns in errors
+        ↓
+Label the misclassified images correctly in Label Studio → repeat
+```
+
+**Where to find labeling candidates:**
+- `data/eval/screen_misclassified.csv` — images the model got wrong → confirm/fix labels
+- `data/eval/screen_viz/*_WRONG.jpg` — visual view of same
+- Run the DB query for low `document_liveness_probability` to find more screen candidates
+
+---
+
+## Data transfer to home GPU (no S3/DB access needed)
+
+Only model weights and dataset are needed — no AWS or DB credentials required for training.
+
+```bash
+# On work PC — pack the dataset and weights
+tar -czf id_forensics_data.tar.gz data/yolo/ models/
+# Transfer via USB / personal cloud storage
+# On home PC — extract
+tar -xzf id_forensics_data.tar.gz
+# Install deps and train
+pip install -r requirements.txt
+python scripts/training/train_stage2_screen.py
+```
+
+AWS credentials are only needed for:
+- Downloading new images from S3 (`scripts/download_from_manifest.py`)
+- Field extraction (`field_extractor/`, Stage 5 — calls AWS Textract)
+
+---
+
+## Project layout
+
+```
+id-forensics-model/
+├── id_crop/                  # Stage 1 — deskew & orientation
+├── presentation_attack/      # Stage 2 — screen / printout detection
+├── tampering_detection/      # Stage 3 — ELA, EXIF
+├── id_type/                  # Stage 4 — ID type classifier (stub)
+├── field_extractor/          # Stage 5 — Textract OCR
+├── orchestration/            # Stage 7 — decision matrix
+│   └── results.py            # shared dataclasses
+├── scripts/
+│   ├── training/             # train_stage1_corners.py, train_stage2_screen.py
+│   ├── convert_labels_to_yolo.py
+│   ├── split_yolo_dataset.py
+│   ├── evaluate_models.py
+│   ├── smoke_test_pipeline.py
+│   └── download_from_manifest.py
+├── tests/                    # pytest unit tests
+├── docs/
+│   └── jira_specifications.md
+├── models/
+│   └── README.md             # weight artifact registry
+├── data/
+│   └── labels/               # label_studio_export.json (committed)
+├── requirements.txt
+└── .env.example
+```
+
+---
+
+## Spec
+
+See [`docs/jira_specifications.md`](docs/jira_specifications.md) for full product specification (FRAUD-1045).

@@ -1,0 +1,35 @@
+# ── Secrets & environment ────────────────────────────────────────────────────
+.env
+
+# ── Python runtime ───────────────────────────────────────────────────────────
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# ── Model weights (large binaries — document paths in models/README.md) ──────
+models/**/*.pt
+models/**/*.pth
+models/**/*.onnx
+# Allow models/README.md
+!models/README.md
+
+# ── Image data (large / sensitive — transfer manually or via S3) ─────────────
+data/raw/
+data/yolo/
+data/manifests/
+# Allow label export and eval JSON reports (small text files)
+!data/labels/
+!data/eval/*.json
+!data/eval/*.csv
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

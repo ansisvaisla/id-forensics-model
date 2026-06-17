@@ -1,0 +1,178 @@
+[
+  {
+    "image": "0faa8124-2023_12_25_919f2198.jpg",
+    "task_id": 18,
+    "click_order_roles": [
+      "BL",
+      "BR",
+      "TR",
+      "TL"
+    ],
+    "hint": "Reverse order (BL -> BR -> TR -> TL)"
+  },
+  {
+    "image": "20aeca29-2023_05_29_c3eac6d4.jpg",
+    "task_id": 20,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "2755eb8d-2023_07_12_29d7f59f.jpg",
+    "task_id": 26,
+    "click_order_roles": [
+      "TL",
+      "BL",
+      "BR",
+      "TR"
+    ],
+    "hint": "Clockwise vs counter-clockwise mix-up"
+  },
+  {
+    "image": "68298c1c-2023_07_26_f2e93105.jpg",
+    "task_id": 34,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "15d34b45-2023_07_29_e700eb53.jpg",
+    "task_id": 35,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "0e5d74c9-2023_08_03_62d43c97.jpg",
+    "task_id": 38,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "e19655a5-2023_09_14_8316c49e.jpg",
+    "task_id": 57,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "99bc8057-2023_11_01_def7c028.jpg",
+    "task_id": 73,
+    "click_order_roles": [
+      "BL",
+      "BR",
+      "TR",
+      "TL"
+    ],
+    "hint": "Reverse order (BL -> BR -> TR -> TL)"
+  },
+  {
+    "image": "f2122280-2024_01_13_4fa2bb0c.jpg",
+    "task_id": 94,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "0eb018b2-2024_02_13_92b485a1.jpg",
+    "task_id": 104,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "d1613773-2024_03_18_71ce5d08.jpg",
+    "task_id": 113,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "78d8c278-2024_03_25_e231140e.jpg",
+    "task_id": 115,
+    "click_order_roles": [
+      "BR",
+      "BL",
+      "TL",
+      "TR"
+    ],
+    "hint": "Corner order does not match TL -> TR -> BR -> BL"
+  },
+  {
+    "image": "3b9c5369-2024_03_28_04a14f05.jpg",
+    "task_id": 117,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "e589b47b-2024_04_14_e18b734d.jpg",
+    "task_id": 124,
+    "click_order_roles": [
+      "BL",
+      "TL",
+      "TR",
+      "BR"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "b8d8b872-2024_12_24_1ffc56cc.jpg",
+    "task_id": 158,
+    "click_order_roles": [
+      "TR",
+      "BR",
+      "BL",
+      "TL"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  },
+  {
+    "image": "65925e46-2024_07_16_a8b6c53a.jpg",
+    "task_id": 181,
+    "click_order_roles": [
+      "TR",
+      "BR",
+      "BL",
+      "TL"
+    ],
+    "hint": "Rotated card \u2014 corners shifted (did not start at card TL)"
+  }
+]
