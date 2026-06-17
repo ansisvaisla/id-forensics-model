@@ -195,18 +195,67 @@ Label the misclassified images correctly in Label Studio → repeat
 
 ## Data transfer to home GPU (no S3/DB access needed)
 
-Only model weights and dataset are needed — no AWS or DB credentials required for training.
+Training only needs **code (GitHub)** + **YOLO dataset (zip)**. No AWS or DB credentials required.
 
-```bash
-# On work PC — pack the dataset and weights
-tar -czf id_forensics_data.tar.gz data/yolo/ models/
-# Transfer via USB / personal cloud storage
-# On home PC — extract
-tar -xzf id_forensics_data.tar.gz
-# Install deps and train
-pip install -r requirements.txt
-python scripts/training/train_stage2_screen.py
+### What goes where
+
+| Item | GitHub | Zip transfer |
+|------|--------|--------------|
+| Python code, scripts, tests | yes | — |
+| `data/labels/label_studio_export.json` | yes | also in zip |
+| `data/yolo/` (images + labels + splits) | no — too large | **yes** |
+| `data/raw/` (original images) | no | only if re-converting at home |
+| `models/*.pt` (weights) | no | optional (`--include-models`) |
+| `.env` (AWS/DB secrets) | never | not needed for training |
+
+### On work PC (before leaving)
+
+```powershell
+cd id-forensics-model
+.\venv\Scripts\activate
+
+# Regenerate YOLO dataset from latest labels
+python scripts/convert_labels_to_yolo.py
+python scripts/split_yolo_dataset.py
+
+# Create transfer zip (~hundreds of MB)
+python scripts/pack_for_home.py
+# Optional: include existing weights as starting point
+python scripts/pack_for_home.py --include-models
 ```
+
+Copy `id_forensics_home_data.zip` to USB / personal cloud.
+
+### On home PC
+
+```powershell
+git clone <your-repo-url>
+cd id-forensics-model
+
+# Extract zip into repo root (creates data/yolo/ etc.)
+Expand-Archive -Path ..\id_forensics_home_data.zip -DestinationPath . -Force
+
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+
+# CUDA PyTorch (if pip installed CPU-only build):
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+python scripts/verify_home_setup.py
+python scripts/training/train_stage2_screen.py
+python scripts/evaluate_models.py
+```
+
+### Push code to GitHub (first time)
+
+```powershell
+# On work PC — after commits are ready
+git remote add origin https://github.com/<your-org>/id-forensics-model.git
+git push -u origin master
+```
+
+Create the empty repo on GitHub first (no README — you already have one locally).
 
 AWS credentials are only needed for:
 - Downloading new images from S3 (`scripts/download_from_manifest.py`)

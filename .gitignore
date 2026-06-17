@@ -18,11 +18,15 @@ models/**/*.pth
 models/**/*.onnx
 # Allow models/README.md
 !models/README.md
+# Base YOLOv8 weights used as training starting point
+scripts/training/*.pt
 
 # ── Image data (large / sensitive — transfer manually or via S3) ─────────────
 data/raw/
 data/yolo/
 data/manifests/
+# Transfer zip created by pack_for_home.py
+id_forensics_home_data.zip
 # Allow label export and eval JSON reports (small text files)
 !data/labels/
 !data/eval/*.json

@@ -34,6 +34,8 @@ RAW_ROOTS = [
     PROJECT_ROOT / "data" / "raw" / "screen_candidates_batch3",
     PROJECT_ROOT / "data" / "raw" / "screen_candidates",
 ]
+# Per-batch labeling folders (e.g. data/raw/batches/iteration2_low_liveness_750/)
+RAW_BATCHES_ROOT = PROJECT_ROOT / "data" / "raw" / "batches"
 # Also search nested id_doc_front tree
 RAW_ROOTS_RECURSIVE = [
     PROJECT_ROOT / "data" / "raw" / "id_doc_front",
@@ -59,6 +61,11 @@ def _build_image_index() -> dict[str, Path]:
         for p in root.rglob("*.jpg"):
             index[p.name] = p
         for p in root.rglob("*.jpeg"):
+            index[p.name] = p
+    if RAW_BATCHES_ROOT.is_dir():
+        for p in RAW_BATCHES_ROOT.rglob("*.jpg"):
+            index[p.name] = p
+        for p in RAW_BATCHES_ROOT.rglob("*.jpeg"):
             index[p.name] = p
     return index
 
