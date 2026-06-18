@@ -2,19 +2,18 @@
 
 Entry point: run(image) -> IdCropResult
 
-Detects 4 corners of an ID card using YOLOv8-Pose (keypoint detection),
-applies warpPerspective to deskew the card, and corrects orientation.
+Detection strategy:
+  1. ML bounding-box crop (primary for Stage 4) — detects where the card is,
+     crops the bbox region. Reliable, never produces face crops or strip artifacts.
+  2. Perspective warp (attempted for Stage 5 OCR quality) — only if ML finds
+     confident corners AND the quad+warp pass sanity checks.
+  3. Full-frame fallback — if card fills >85% of frame, return as-is.
 
-Corner handling strategy (in order):
-  1. Confidence gate   — if box or keypoint confidence too low → skip warp
-  2. Coverage check    — if card fills >85% of frame → already cropped, skip warp
-  3. Off-screen check  — if any corner near image border → partial, skip warp
-  4. 3-corner recovery — if exactly 1 corner weak → reconstruct from ID-1 aspect ratio
-  5. Edge refinement   — snap corners to actual card edges via Canny
-  6. Warp + orient     — perspective transform + landscape correction
+The classical contour approach was removed because it confuses inner card
+rectangles (photo region, text boxes) with the card boundary, producing
+face crops instead of card crops.
 
-Shadow mode: all exceptions are caught by the orchestration layer.
-This module raises normally — the caller handles try/except.
+Shadow mode: this module raises normally. The orchestration layer wraps it in try/except.
 """
 from __future__ import annotations
 
@@ -25,44 +24,53 @@ from typing import Optional
 import numpy as np
 
 from orchestration.results import IdCropResult
+from id_crop.quality import crop_is_plausible, quad_is_sane
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "stage1_corners" / "weights" / "best.pt"
 
-# ISO/IEC 7810 ID-1 card dimensions (mm) — all Kenyan IDs, driving licences
-_ID1_ASPECT = 85.6 / 54.0  # ~1.585  (width / height)
+_ID1_ASPECT = 85.6 / 54.0  # ISO/IEC 7810 ID-1 landscape aspect ratio (~1.585)
 
-# Confidence gates
-_MIN_KPT_CONF = 0.25   # minimum per-keypoint confidence to trust that corner
-_MIN_KPT_MEAN = 0.40   # minimum mean keypoint confidence across all 4
-_MIN_BOX_CONF = 0.45   # minimum bounding box confidence
+# ML fallback confidence gates
+_MIN_KPT_CONF = 0.25
+_MIN_KPT_MEAN = 0.40
+_MIN_BOX_CONF = 0.45
 
-# Skip warp if card already fills most of frame (phone crops close)
-_COVERAGE_SKIP = 0.85  # bbox_area / image_area > this → already well-framed
+# Skip warp if card already fills most of frame
+_COVERAGE_SKIP = 0.85
 
 # Mark as off-screen if corner is within this fraction of image edge
-_EDGE_MARGIN = 0.03   # 3% of image dimension
+_EDGE_MARGIN = 0.03
 
-_model = None
+_ml_model = None
 
 
-def _load_model():
+# ── ML fallback ───────────────────────────────────────────────────────────────
+
+def _load_ml_model():
     from ultralytics import YOLO  # type: ignore
     return YOLO(str(MODEL_PATH))
 
 
-def _get_model():
-    global _model
-    if _model is None:
-        _model = _load_model()
-    return _model
+def _get_ml_model():
+    global _ml_model
+    if _ml_model is None:
+        _ml_model = _load_ml_model()
+    return _ml_model
 
 
-def _extract_corners(result) -> Optional[np.ndarray]:
-    """Extract (4, 2) corner array from a YOLO result.
+def _ml_detect(image: np.ndarray) -> tuple[Optional[np.ndarray], float, Optional[np.ndarray]]:
+    """Run YOLOv8 Pose model. Returns (corners, box_conf, kpt_conf) or (None, 0, None)."""
+    if not MODEL_PATH.is_file():
+        return None, 0.0, None
 
-    Supports both Pose (keypoints) and OBB models so old weights still work
-    during transition. Returns None if no detection.
-    """
+    model = _get_ml_model()
+    results = model(image, verbose=False)
+    if not results:
+        return None, 0.0, None
+
+    result = results[0]
+
+    # Pose model (keypoints)
     if (
         hasattr(result, "keypoints")
         and result.keypoints is not None
@@ -72,210 +80,92 @@ def _extract_corners(result) -> Optional[np.ndarray]:
         if kpts.xy is not None and len(kpts.xy) > 0:
             pts = kpts.xy[0].cpu().numpy()
             if len(pts) == 4:
-                return pts.astype(np.float32)
+                conf = 0.0
+                if hasattr(result, "boxes") and result.boxes is not None and len(result.boxes) > 0:
+                    conf = float(result.boxes[0].conf)
+                kpt_conf = kpts.conf[0].cpu().numpy() if kpts.conf is not None else None
+                return pts.astype(np.float32), conf, kpt_conf
 
+    # OBB legacy fallback
     if hasattr(result, "obb") and result.obb is not None and len(result.obb) > 0:
         pts = result.obb[0].xyxyxyxy[0].cpu().numpy().reshape(4, 2)
-        return pts.astype(np.float32)
+        conf = float(result.obb[0].conf)
+        return pts.astype(np.float32), conf, None
 
-    return None
-
-
-def _get_kpt_confidences(result) -> Optional[np.ndarray]:
-    """Per-keypoint confidence array (length 4) from a Pose result."""
-    if (
-        hasattr(result, "keypoints")
-        and result.keypoints is not None
-        and len(result.keypoints) > 0
-    ):
-        kpts = result.keypoints[0]
-        if kpts.conf is not None and len(kpts.conf) > 0:
-            return kpts.conf[0].cpu().numpy()
-    return None
+    return None, 0.0, None
 
 
-def _get_conf(result) -> float:
-    """Extract detection confidence from either Pose or OBB result."""
-    if hasattr(result, "boxes") and result.boxes is not None and len(result.boxes) > 0:
-        return float(result.boxes[0].conf)
-    if hasattr(result, "obb") and result.obb is not None and len(result.obb) > 0:
-        return float(result.obb[0].conf)
-    return 0.0
-
-
-def _corners_reliable(box_conf: float, kpt_conf: Optional[np.ndarray]) -> bool:
-    """Return False when corners are too uncertain to deskew safely."""
+def _ml_corners_reliable(box_conf: float, kpt_conf: Optional[np.ndarray]) -> bool:
     if box_conf < _MIN_BOX_CONF:
         return False
     if kpt_conf is None or len(kpt_conf) < 4:
-        return True  # OBB fallback — no per-keypoint scores
+        return True
     return float(kpt_conf.min()) >= _MIN_KPT_CONF and float(kpt_conf.mean()) >= _MIN_KPT_MEAN
 
 
+# ── Geometry helpers ──────────────────────────────────────────────────────────
+
 def _card_fills_frame(corners: np.ndarray, img_w: int, img_h: int) -> bool:
-    """True if predicted card bbox covers most of the image (already well-framed)."""
     x1, y1 = corners[:, 0].min(), corners[:, 1].min()
     x2, y2 = corners[:, 0].max(), corners[:, 1].max()
-    bbox_area = (x2 - x1) * (y2 - y1)
-    img_area = img_w * img_h
-    return (bbox_area / img_area) > _COVERAGE_SKIP
+    return ((x2 - x1) * (y2 - y1)) / (img_w * img_h) > _COVERAGE_SKIP
 
 
 def _offscreen_mask(corners: np.ndarray, img_w: int, img_h: int) -> list[bool]:
-    """Return bool list: True = that corner is near/outside the image border."""
-    mx = _EDGE_MARGIN * img_w
-    my = _EDGE_MARGIN * img_h
-    mask = []
-    for x, y in corners:
-        mask.append(
-            x < mx or x > img_w - mx or y < my or y > img_h - my
-        )
-    return mask
+    mx, my = _EDGE_MARGIN * img_w, _EDGE_MARGIN * img_h
+    return [x < mx or x > img_w - mx or y < my or y > img_h - my
+            for x, y in corners]
 
 
-def _reconstruct_missing_corner(
-    corners: np.ndarray,
-    bad_idx: int,
-    img_w: int,
-    img_h: int,
-) -> np.ndarray:
-    """Reconstruct the missing corner using ID-1 aspect ratio.
-
-    Strategy: find the 3 good corners, project the 4th using the known
-    card aspect ratio (1.585:1). Works when exactly one corner is off-screen.
-
-    The 4 corners are in arbitrary order; we first sort to TL/TR/BR/BL,
-    reconstruct the missing one, then return in original order.
-    """
+def _reconstruct_missing_corner(corners: np.ndarray, bad_idx: int,
+                                 img_w: int, img_h: int) -> np.ndarray:
     ordered = _order_corners_tl_tr_br_bl(corners)
-    bad_ordered = _find_ordered_idx(corners, ordered, bad_idx)
+    # Map bad original index to ordered index
+    pt = corners[bad_idx]
+    dists = [math.hypot(float(ordered[i, 0] - pt[0]), float(ordered[i, 1] - pt[1]))
+             for i in range(4)]
+    bad_ordered = int(np.argmin(dists))
 
-    # TL=0, TR=1, BR=2, BL=3
     tl, tr, br, bl = ordered[0], ordered[1], ordered[2], ordered[3]
+    if bad_ordered == 0:
+        ordered[0] = tr + bl - br
+    elif bad_ordered == 1:
+        ordered[1] = tl + br - bl
+    elif bad_ordered == 2:
+        ordered[2] = bl + tr - tl
+    else:
+        ordered[3] = br + tl - tr
 
-    if bad_ordered == 0:  # missing TL
-        # TL ≈ TR - (BR - BL) + (BL - BR)*0 … simpler: use parallelogram
-        tl = tr + bl - br
-        ordered[0] = tl
-    elif bad_ordered == 1:  # missing TR
-        tr = tl + br - bl
-        ordered[1] = tr
-    elif bad_ordered == 2:  # missing BR
-        br = bl + tr - tl
-        ordered[2] = br
-    else:  # missing BL
-        bl = br + tl - tr
-        ordered[3] = bl
-
-    # Clip to image bounds with small margin
     ordered[:, 0] = np.clip(ordered[:, 0], 0, img_w - 1)
     ordered[:, 1] = np.clip(ordered[:, 1], 0, img_h - 1)
 
-    # Map back to original corner order
+    # Rebuild original-order array from updated ordered
     result = corners.copy()
-    for orig_i, ordered_i in enumerate(_ordered_to_orig_map(corners, ordered)):
-        result[orig_i] = ordered[ordered_i]
+    for orig_i, pt in enumerate(corners):
+        dists2 = [math.hypot(float(ordered[i, 0] - pt[0]), float(ordered[i, 1] - pt[1]))
+                  for i in range(4)]
+        result[orig_i] = ordered[int(np.argmin(dists2))]
     return result
 
 
-def _find_ordered_idx(orig: np.ndarray, ordered: np.ndarray, orig_idx: int) -> int:
-    """Find which TL/TR/BR/BL index corresponds to orig[orig_idx]."""
-    pt = orig[orig_idx]
-    dists = [math.hypot(float(ordered[i, 0] - pt[0]), float(ordered[i, 1] - pt[1]))
-             for i in range(4)]
-    return int(np.argmin(dists))
-
-
-def _ordered_to_orig_map(orig: np.ndarray, ordered: np.ndarray) -> list[int]:
-    """For each original corner index, return which ordered index it maps to."""
-    mapping = []
-    for pt in orig:
-        dists = [math.hypot(float(ordered[i, 0] - pt[0]), float(ordered[i, 1] - pt[1]))
-                 for i in range(4)]
-        mapping.append(int(np.argmin(dists)))
-    return mapping
-
-
-def _refine_corners_edge(image: np.ndarray, corners: np.ndarray) -> np.ndarray:
-    """Snap predicted corners to actual card edges via Canny contour detection."""
-    import cv2
-    from itertools import permutations
-
-    h, w = image.shape[:2]
-    diag = math.hypot(w, h)
-
-    PAD = int(0.04 * min(w, h))
-    x1 = max(0, int(corners[:, 0].min()) - PAD)
-    y1 = max(0, int(corners[:, 1].min()) - PAD)
-    x2 = min(w, int(corners[:, 0].max()) + PAD)
-    y2 = min(h, int(corners[:, 1].max()) + PAD)
-
-    region = image[y1:y2, x1:x2]
-    if region.size == 0 or (x2 - x1) < 50 or (y2 - y1) < 50:
-        return corners
-
-    gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    otsu_val, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    t = float(otsu_val) if float(otsu_val) > 0 else 50.0
-    edges = cv2.Canny(blurred, t * 0.5, t)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    edges = cv2.dilate(edges, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return corners
-
-    for cnt in sorted(contours, key=cv2.contourArea, reverse=True):
-        peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-        if len(approx) != 4:
-            continue
-        refined = approx.reshape(4, 2).astype(np.float32)
-        refined[:, 0] += x1
-        refined[:, 1] += y1
-        best_dist = min(
-            sum(math.hypot(refined[perm[i], 0] - corners[i, 0],
-                           refined[perm[i], 1] - corners[i, 1])
-                for i in range(4)) / 4
-            for perm in permutations(range(4))
-        )
-        if best_dist < 0.10 * diag:
-            return refined
-
-    return corners
-
-
 def _order_corners_tl_tr_br_bl(pts: np.ndarray) -> np.ndarray:
-    """Sort 4 corners into TL, TR, BR, BL order for warpPerspective."""
     s = pts.sum(axis=1)
     diff = np.diff(pts, axis=1).flatten()
-    tl = pts[np.argmin(s)]
-    br = pts[np.argmax(s)]
-    tr = pts[np.argmin(diff)]
-    bl = pts[np.argmax(diff)]
-    return np.array([tl, tr, br, bl], dtype=np.float32)
+    return np.array([pts[np.argmin(s)], pts[np.argmin(diff)],
+                     pts[np.argmax(s)], pts[np.argmax(diff)]], dtype=np.float32)
 
 
 def _warp_perspective(image: np.ndarray, corners: np.ndarray) -> np.ndarray:
-    """Deskew image using 4 detected corners ordered TL, TR, BR, BL."""
     import cv2
     src = _order_corners_tl_tr_br_bl(corners)
-    w = int(max(
-        np.linalg.norm(src[1] - src[0]),
-        np.linalg.norm(src[2] - src[3]),
-    ))
-    h = int(max(
-        np.linalg.norm(src[3] - src[0]),
-        np.linalg.norm(src[2] - src[1]),
-    ))
+    w = int(max(np.linalg.norm(src[1] - src[0]), np.linalg.norm(src[2] - src[3])))
+    h = int(max(np.linalg.norm(src[3] - src[0]), np.linalg.norm(src[2] - src[1])))
     dst = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
     M = cv2.getPerspectiveTransform(src, dst)
     return cv2.warpPerspective(image, M, (w, h))
 
 
 def _correct_orientation(image: np.ndarray) -> np.ndarray:
-    """Rotate portrait-oriented crops to landscape (ID cards are always landscape)."""
     import cv2
     h, w = image.shape[:2]
     if h > w * 1.2:
@@ -283,12 +173,58 @@ def _correct_orientation(image: np.ndarray) -> np.ndarray:
     return image
 
 
-def run(image: np.ndarray) -> IdCropResult:
-    """Detect ID card corners, deskew, and correct orientation.
+def _try_warp(image: np.ndarray, corners: np.ndarray,
+              conf: float, is_partial: bool,
+              method: str) -> Optional[IdCropResult]:
+    """Validate corners, warp, validate crop. Returns IdCropResult or None on failure."""
+    sane, _ = quad_is_sane(corners)
+    if not sane:
+        return None
 
-    Returns IdCropResult with cropped_image set to deskewed card,
-    or original image if cropping is not safe/needed.
+    cropped = _warp_perspective(image, corners)
+    cropped = _correct_orientation(cropped)
+
+    ok, _ = crop_is_plausible(cropped)
+    if not ok:
+        return None
+
+    return IdCropResult(
+        cropped_image=cropped,
+        is_partial_document=is_partial,
+        corners_detected=4,
+        label="id_card_reconstructed" if is_partial else "id_card",
+        confidence=conf,
+    )
+
+
+# ── Main entry point ─────────────────────────────────────────────────────────
+
+def _ml_bbox_crop(image: np.ndarray, conf: float, corners: np.ndarray) -> Optional[np.ndarray]:
+    """Tight bounding-box crop from ML detection. Adds 5% padding."""
+    import cv2
+    h, w = image.shape[:2]
+    pad_x = (corners[:, 0].max() - corners[:, 0].min()) * 0.05
+    pad_y = (corners[:, 1].max() - corners[:, 1].min()) * 0.05
+    x1 = max(0, int(corners[:, 0].min() - pad_x))
+    y1 = max(0, int(corners[:, 1].min() - pad_y))
+    x2 = min(w, int(corners[:, 0].max() + pad_x))
+    y2 = min(h, int(corners[:, 1].max() + pad_y))
+    crop = image[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+    return crop
+
+
+def run(image: np.ndarray) -> IdCropResult:
+    """Detect ID card and crop to card region.
+
+    Primary output: ML bounding-box crop (reliable, no warp artifacts).
+    If ML corners are confident and quad is sane, also attempts perspective
+    warp — if warp passes quality check, returns the warp (better for OCR).
+    Falls back to bbox crop or original image if either approach fails.
     """
+    h, w = image.shape[:2]
+
     if not MODEL_PATH.is_file():
         return IdCropResult(
             cropped_image=image,
@@ -298,24 +234,9 @@ def run(image: np.ndarray) -> IdCropResult:
             confidence=0.0,
         )
 
-    model = _get_model()
-    h, w = image.shape[:2]
-    results = model(image, verbose=False)
+    ml_corners, conf, kpt_conf = _ml_detect(image)
 
-    if not results:
-        return IdCropResult(
-            cropped_image=image,
-            is_partial_document=True,
-            corners_detected=0,
-            label="no_id_detected",
-            confidence=0.0,
-        )
-
-    corners = _extract_corners(results[0])
-    conf = _get_conf(results[0])
-    kpt_conf = _get_kpt_confidences(results[0])
-
-    if corners is None or len(corners) < 4:
+    if ml_corners is None:
         return IdCropResult(
             cropped_image=image,
             is_partial_document=True,
@@ -324,55 +245,56 @@ def run(image: np.ndarray) -> IdCropResult:
             confidence=conf,
         )
 
-    # Gate 1: overall confidence too low
-    if not _corners_reliable(conf, kpt_conf):
-        return IdCropResult(
-            cropped_image=image,
-            is_partial_document=True,
-            corners_detected=4,
-            label="low_corner_confidence",
-            confidence=conf,
-        )
-
-    # Gate 2: card already fills the frame — warp would just add distortion
-    if _card_fills_frame(corners, w, h):
+    # Coverage check — card fills the frame, no crop needed
+    if _card_fills_frame(ml_corners, w, h):
+        ok, _ = crop_is_plausible(image)
         return IdCropResult(
             cropped_image=image,
             is_partial_document=False,
             corners_detected=4,
-            label="full_frame_id",
+            label="full_frame_id" if ok else "invalid_crop",
             confidence=conf,
         )
 
-    # Gate 3: partial card — check which corners are off-screen
-    offscreen = _offscreen_mask(corners, w, h)
-    n_offscreen = sum(offscreen)
+    # ── Attempt perspective warp if corners are trustworthy ───────────────────
+    if _ml_corners_reliable(conf, kpt_conf):
+        offscreen = _offscreen_mask(ml_corners, w, h)
+        n_off = sum(offscreen)
 
-    if n_offscreen >= 2:
-        # Too many corners missing — can't reliably reconstruct
-        return IdCropResult(
-            cropped_image=image,
-            is_partial_document=True,
-            corners_detected=4 - n_offscreen,
-            label="partial_id",
-            confidence=conf,
-        )
+        corners_for_warp = ml_corners
+        if n_off == 1:
+            bad_idx = offscreen.index(True)
+            corners_for_warp = _reconstruct_missing_corner(ml_corners, bad_idx, w, h)
 
-    if n_offscreen == 1:
-        # Exactly one corner off-screen — reconstruct using parallelogram
-        bad_idx = offscreen.index(True)
-        corners = _reconstruct_missing_corner(corners, bad_idx, w, h)
+        if n_off <= 1:
+            warp_result = _try_warp(
+                image, corners_for_warp,
+                conf=conf, is_partial=(n_off > 0),
+                method="ml",
+            )
+            if warp_result is not None:
+                return warp_result
 
-    # Refine + warp
-    corners = _refine_corners_edge(image, corners)
-    cropped = _warp_perspective(image, corners)
-    cropped = _correct_orientation(cropped)
+    # ── Bbox crop fallback ────────────────────────────────────────────────────
+    bbox_crop = _ml_bbox_crop(image, conf, ml_corners)
+    if bbox_crop is not None:
+        ok, _ = crop_is_plausible(bbox_crop)
+        if ok:
+            offscreen = _offscreen_mask(ml_corners, w, h)
+            is_partial = sum(offscreen) > 0
+            return IdCropResult(
+                cropped_image=bbox_crop,
+                is_partial_document=is_partial,
+                corners_detected=4,
+                label="bbox_crop",
+                confidence=conf,
+            )
 
-    is_partial = n_offscreen > 0
+    # ── Nothing worked ────────────────────────────────────────────────────────
     return IdCropResult(
-        cropped_image=cropped,
-        is_partial_document=is_partial,
+        cropped_image=image,
+        is_partial_document=True,
         corners_detected=4,
-        label="id_card_reconstructed" if is_partial else "id_card",
+        label="invalid_crop",
         confidence=conf,
     )

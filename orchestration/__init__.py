@@ -42,7 +42,11 @@ def _load_image_bytes(image_bytes: bytes) -> np.ndarray:
 def _risk_tier(result: PipelineResult) -> str:
     if result.is_tampered or (result.is_screen_replay and (result.presentation_attack and result.presentation_attack.screen_score > 0.85)):
         return "high_fraud"
-    if result.crop and result.crop.label in ("no_id_detected", "selfie_instead_of_document"):
+    if result.crop and result.crop.label in (
+        "no_id_detected",
+        "selfie_instead_of_document",
+        "invalid_crop",
+    ):
         return "garbage_photo"
     if result.is_partial_document:
         return "user_error"
@@ -99,12 +103,21 @@ def run(image_bytes: bytes) -> PipelineResult:
     except Exception as exc:
         logger.error("tampering_detection stage failed: %s", exc)
 
-    # --- Stage 4: ID Type Classification ---
+    # --- Stage 4: ID Type Classification (only after a successful deskew) ---
     try:
-        import id_type as id_type_module
-        id_type_result: IdTypeResult = id_type_module.run(cropped_image)
-        result.id_type = id_type_result
-        result.id_type_label = id_type_result.id_type
+        crop_label = result.crop.label if result.crop else None
+        from id_crop.quality import crop_ready_for_classification
+
+        ready, skip_reason = crop_ready_for_classification(cropped_image, crop_label)
+        if not ready:
+            logger.info("id_type skipped: %s", skip_reason)
+            result.id_type = IdTypeResult(id_type="unknown_id", confidence=0.0)
+            result.id_type_label = "unknown_id"
+        else:
+            import id_type as id_type_module
+            id_type_result: IdTypeResult = id_type_module.run(cropped_image)
+            result.id_type = id_type_result
+            result.id_type_label = id_type_result.id_type
     except Exception as exc:
         logger.error("id_type stage failed: %s", exc)
 

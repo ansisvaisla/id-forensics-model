@@ -71,10 +71,16 @@ def run(image: np.ndarray) -> IdTypeResult:
 
     Returns:
         IdTypeResult with id_type and confidence.
-        Returns 'unknown' if model not yet trained.
+        Returns unknown_id if model not trained or crop is not classifiable.
     """
+    from id_crop.quality import crop_is_plausible
+
+    ok, _ = crop_is_plausible(image)
+    if not ok:
+        return IdTypeResult(id_type="unknown_id", confidence=0.0)
+
     if not MODEL_PATH.is_file():
-        return IdTypeResult(id_type="unknown", confidence=0.0)
+        return IdTypeResult(id_type="unknown_id", confidence=0.0)
 
     import torch  # type: ignore
     import torch.nn.functional as F  # type: ignore
