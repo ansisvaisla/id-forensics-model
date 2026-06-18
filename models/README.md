@@ -56,7 +56,7 @@ See `tampering_detection/__init__.py` for thresholds.
 |---|---|
 | Path | `models/stage4_id_type/best.pt` |
 | Architecture | EfficientNet-B0 |
-| Task | 6-class: legacy / maisha / huduma / passport / other_document / non_national_id |
+| Task | 7-class: legacy / maisha / huduma / passport / driving_licence / foreign_document / unknown_id |
 | Status | Deferred — insufficient huduma/passport labels. v1 returns 'unknown'. |
 
 ---

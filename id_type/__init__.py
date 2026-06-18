@@ -18,7 +18,15 @@ MODEL_PATH = (
     Path(__file__).resolve().parents[1] / "models" / "stage4_id_type" / "best.pt"
 )
 
-KNOWN_TYPES = ("legacy", "maisha", "huduma", "passport", "other_document", "non_national_id")
+KNOWN_TYPES = (
+    "legacy",
+    "maisha",
+    "huduma",
+    "passport",
+    "driving_licence",
+    "foreign_document",
+    "unknown_id",
+)
 
 _model = None
 

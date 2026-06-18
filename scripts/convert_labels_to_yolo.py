@@ -1,15 +1,22 @@
-"""Convert Label Studio polygon export to YOLOv8 OBB format.
+"""Convert Label Studio polygon export to YOLOv8 Pose (keypoint) format.
 
 Output structure:
     data/yolo/corners/
         images/all/<stem>.jpg
-        labels/all/<stem>.txt        # 0 x1 y1 x2 y2 x3 y3 x4 y4 (normalised 0-1)
-        data.yaml
+        labels/all/<stem>.txt        # YOLO pose: 0 cx cy w h x1 y1 2 x2 y2 2 x3 y3 2 x4 y4 2
+        data.yaml                    # kpt_shape: [4, 3]
 
     data/yolo/screen/
         images/all/<stem>.jpg
         labels/all/<stem>.txt        # 0 (screen) or 1 (not_screen)
         data.yaml                    # classification task
+
+Corner keypoints are the 4 polygon points from Label Studio in order:
+  TL, TR, BR, BL  (the polygon order the user drew them in)
+
+Switching from OBB to Pose lets YOLOv8 predict arbitrary quadrilaterals
+(trapezoids) rather than only rotated rectangles, which is essential for
+perspective-skewed ID cards.
 
 Only completed (non-cancelled) annotations are included.
 Images are resolved from data/raw/** by matching the flat filename.
@@ -81,7 +88,14 @@ def _parse_tasks(export_path: Path) -> list[dict]:
 
 
 def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bool = False) -> None:
-    """Export 4-corner polygon labels to YOLOv8 OBB format."""
+    """Export 4-corner polygon labels to YOLOv8 Pose (keypoint) format.
+
+    Label format per line:
+        0 cx cy bw bh  x1 y1 2  x2 y2 2  x3 y3 2  x4 y4 2
+    where cx/cy/bw/bh is the normalised bounding box of the 4 points,
+    x1..x4/y1..y4 are the normalised keypoint coordinates,
+    and 2 = visible.
+    """
     out_images = YOLO_CORNERS_DIR / "images" / "all"
     out_labels = YOLO_CORNERS_DIR / "labels" / "all"
     if not dry_run:
@@ -122,8 +136,17 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
             continue
 
         pts = polygon["value"]["points"]  # [[x%, y%], ...]
-        coords = " ".join(f"{x / 100:.6f} {y / 100:.6f}" for x, y in pts)
-        label_line = f"0 {coords}"
+        # Normalise 0-1
+        xs = [p[0] / 100.0 for p in pts]
+        ys = [p[1] / 100.0 for p in pts]
+        # Bounding box centre + size
+        cx = (min(xs) + max(xs)) / 2
+        cy = (min(ys) + max(ys)) / 2
+        bw = max(xs) - min(xs)
+        bh = max(ys) - min(ys)
+        # Keypoints with visibility=2 (labeled & visible)
+        kpts = " ".join(f"{x:.6f} {y:.6f} 2" for x, y in zip(xs, ys))
+        label_line = f"0 {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f} {kpts}"
 
         stem = Path(flat).stem
         if not dry_run:
@@ -203,10 +226,11 @@ def _write_corners_yaml() -> None:
         "val: images/val\n"
         "test: images/test\n"
         "\n"
+        "kpt_shape: [4, 3]  # 4 keypoints, each (x, y, visibility)\n"
+        "\n"
+        "nc: 1\n"
         "names:\n"
         "  0: id_card\n"
-        "\n"
-        "task: obb\n"
     )
     (YOLO_CORNERS_DIR / "data.yaml").write_text(yaml_content, encoding="utf-8")
 

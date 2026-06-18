@@ -1,8 +1,12 @@
-"""Train Stage 1 — YOLOv8-OBB corner detector.
+"""Train Stage 1 — YOLOv8-Pose corner keypoint detector.
+
+Trains a pose estimation model to predict 4 keypoints (card corners)
+rather than a rotated bounding box (OBB). This correctly handles
+perspective-skewed cards which are trapezoidal, not rectangular.
 
 Usage:
     python scripts/training/train_stage1_corners.py
-    python scripts/training/train_stage1_corners.py --model yolov8s-obb.pt --epochs 100
+    python scripts/training/train_stage1_corners.py --model yolov8s-pose.pt --epochs 100
 
 Output: models/stage1_corners/  (weights/best.pt, weights/last.pt)
 """
@@ -18,8 +22,8 @@ OUTPUT_DIR = PROJECT_ROOT / "models" / "stage1_corners"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Train YOLOv8-OBB corner detector")
-    parser.add_argument("--model", default="yolov8n-obb.pt", help="Base model checkpoint")
+    parser = argparse.ArgumentParser(description="Train YOLOv8-Pose corner keypoint detector")
+    parser.add_argument("--model", default="yolov8n-pose.pt", help="Base pose model checkpoint")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=16)
@@ -37,9 +41,16 @@ def main() -> int:
         print("ultralytics not installed. Run: pip install ultralytics", file=sys.stderr)
         return 1
 
+    # Wipe stale label caches — required when switching task type (OBB -> Pose)
+    # or re-running after convert_labels_to_yolo.py regenerates labels.
+    labels_root = DATA_YAML.parent / "labels"
+    for cache_file in labels_root.rglob("*.cache"):
+        cache_file.unlink()
+        print(f"  deleted stale cache: {cache_file.relative_to(PROJECT_ROOT)}")
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print(f"Training YOLOv8-OBB on {DATA_YAML}")
+    print(f"Training YOLOv8-Pose on {DATA_YAML}")
     print(f"  base model : {args.model}")
     print(f"  epochs     : {args.epochs}")
     print(f"  batch      : {args.batch}")

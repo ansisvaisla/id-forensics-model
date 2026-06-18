@@ -120,7 +120,7 @@ Once the business approves model thresholds from Phase 1 data, the pipeline rout
 | `is_screen_replay` | `bool` | True when screen replay detected (Moiré / texture CNN) |
 | `is_printout` | `bool` | True when print attack detected (v1: always False — deferred to v2) |
 | `is_tampered` | `bool` | True when ELA or EXIF analysis detects digital manipulation |
-| `id_type` | `str` | Detected document type: `legacy` / `maisha` / `huduma` / `passport` / `other_document` / `non_national_id` / `unknown` |
+| `id_type` | `str` | `legacy` / `maisha` / `huduma` / `passport` / `driving_licence` / `foreign_document` / `unknown_id` / `unknown` (model default when not trained) |
 | `extracted_fields` | `dict` | OCR-extracted fields: `name`, `surname`, `sex`, `nationality`, `id_number`, `date_of_birth` (null if not extracted) |
 | `field_extraction_confidence` | `float` | Average AWS Textract confidence (0–1) on extracted fields |
 | `label` | `str` | Categorical outcome label (e.g. `selfie_instead_of_document`, `printed_paper_spoof`) |

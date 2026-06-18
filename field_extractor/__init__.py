@@ -10,6 +10,7 @@ v1 strategy — no field-location labeling needed:
   - legacy:   position heuristics (name top-center, ID number right-middle, DOB lower area)
   - maisha:   surname line 1, given name line 2, ID number chip zone
   - passport: MRZ bottom two lines → standard MRZ regex parser
+  - driving_licence / foreign_document: keyword fallback (no position template yet)
   - fallback: keyword proximity search for known field labels
 
 Shadow mode: exceptions caught by orchestration layer.

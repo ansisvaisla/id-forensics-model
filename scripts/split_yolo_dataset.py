@@ -89,8 +89,8 @@ def split_dataset(dataset_dir: Path, seed: int, stratify: bool) -> None:
             dst_lbl = lbl_out / f"{stem}.txt"
             if not dst_img.exists() and src_img.exists():
                 shutil.copy2(src_img, dst_img)
-            if not dst_lbl.exists() and src_lbl.exists():
-                shutil.copy2(src_lbl, dst_lbl)
+            if src_lbl.exists():
+                shutil.copy2(src_lbl, dst_lbl)  # always overwrite — labels may have changed format
             moved += 1
         print(f"  {split:5s}: {moved}")
 

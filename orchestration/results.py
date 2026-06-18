@@ -37,7 +37,7 @@ class TamperingResult:
 @dataclass
 class IdTypeResult:
     """Output of Stage 4 — ID Type Classification."""
-    id_type: str  # 'legacy' | 'maisha' | 'huduma' | 'passport' | 'other_document' | 'non_national_id' | 'unknown'
+    id_type: str  # legacy | maisha | huduma | passport | driving_licence | foreign_document | unknown_id | unknown
     confidence: float
 
 

@@ -188,35 +188,17 @@ def evaluate_screen(threshold: float = 0.5) -> dict:
 # Stage 1 — Corners evaluation
 # ---------------------------------------------------------------------------
 
-def _polygon_to_abs(points_norm: list[list[float]], w: int, h: int) -> list[tuple[float, float]]:
-    """Convert normalised [x, y] pairs to absolute pixel coordinates."""
-    return [(x * w, y * h) for x, y in zip(points_norm[0::2], points_norm[1::2])]
-
-
-def _corner_distance(pred_pts: list[tuple[float, float]], true_pts: list[tuple[float, float]]) -> float:
-    """Mean Euclidean distance between matched corner pairs (pixels).
-
-    Finds the optimal bijective matching between pred and true corners
-    (minimum total distance) by trying all 4! = 24 permutations.
-    """
-    import math
-    from itertools import permutations
-
-    def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:
-        return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
-
-    best = float("inf")
-    for perm in permutations(range(len(pred_pts))):
-        total = sum(_dist(pred_pts[perm[i]], true_pts[i]) for i in range(len(true_pts)))
-        if total < best:
-            best = total
-    return best / len(true_pts)
-
 
 def evaluate_corners(tolerance_pct: float = 0.05, max_viz: int = 10) -> dict:
-    """Run Stage 1 corner model on test split. Returns metrics dict."""
+    """Run Stage 1 corner model on test split. Returns metrics dict.
+
+    Supports both Pose (keypoints) and OBB (legacy) model weights.
+    Viz draws matched pairs as lines: GREEN=true corner, RED=predicted, YELLOW=connecting line.
+    """
     import cv2
     import numpy as np
+    import math
+    from itertools import permutations
 
     if not CORNERS_MODEL.is_file():
         print(f"Corners model not found: {CORNERS_MODEL}", file=sys.stderr)
@@ -242,46 +224,92 @@ def evaluate_corners(tolerance_pct: float = 0.05, max_viz: int = 10) -> dict:
         if not lbl_path.is_file():
             continue
 
-        # Parse true corners from label file: "0 x1 y1 x2 y2 x3 y3 x4 y4"
-        vals = [float(v) for v in lbl_path.read_text().strip().split()[1:]]
-        if len(vals) != 8:
-            continue
-
+        parts = lbl_path.read_text().strip().split()
         img = cv2.imread(str(img_path))
         h, w = img.shape[:2]
-        true_pts = list(zip(
-            [vals[i] * w for i in range(0, 8, 2)],
-            [vals[i] * h for i in range(1, 8, 2)],
-        ))
+
+        # Parse ground-truth corners from label file.
+        # Pose format:   0 cx cy bw bh  x1 y1 v1  x2 y2 v2  x3 y3 v3  x4 y4 v4  (17 values)
+        # OBB format:    0 x1 y1 x2 y2 x3 y3 x4 y4  (9 values)
+        vals = [float(v) for v in parts[1:]]
+        if len(vals) == 16:
+            # Pose: skip bbox (first 4), then take x y (skip visibility) for each of 4 kpts
+            true_pts = np.array([
+                [vals[4 + i * 3] * w, vals[5 + i * 3] * h]
+                for i in range(4)
+            ], dtype=np.float32)
+        elif len(vals) == 8:
+            # OBB legacy
+            true_pts = np.array([
+                [vals[i * 2] * w, vals[i * 2 + 1] * h]
+                for i in range(4)
+            ], dtype=np.float32)
+        else:
+            continue
 
         results = model(img, verbose=False)
-        if not results or len(results[0].obb) == 0:
+
+        # Extract predicted corners (Pose or OBB)
+        pred_pts = None
+        if results:
+            r = results[0]
+            if (
+                hasattr(r, "keypoints") and r.keypoints is not None
+                and len(r.keypoints) > 0
+            ):
+                kpts = r.keypoints[0].xy
+                if kpts is not None and len(kpts) > 0:
+                    pred_pts = kpts[0].cpu().numpy()
+            elif hasattr(r, "obb") and r.obb is not None and len(r.obb) > 0:
+                pred_pts = r.obb[0].xyxyxyxy[0].cpu().numpy().reshape(4, 2)
+
+        if pred_pts is None or len(pred_pts) < 4:
             no_detection += 1
             per_image.append({"stem": img_path.stem, "detected": False, "dist": None})
             continue
 
-        pred_raw = results[0].obb[0].xyxyxyxy[0].cpu().numpy().reshape(4, 2)
-        pred_pts = [(float(x), float(y)) for x, y in pred_raw]
+        # Optimal corner matching (permutations)
+        best_dist = float("inf")
+        best_perm = list(range(4))
+        for perm in permutations(range(4)):
+            d = sum(
+                math.hypot(pred_pts[perm[i], 0] - true_pts[i, 0],
+                           pred_pts[perm[i], 1] - true_pts[i, 1])
+                for i in range(4)
+            ) / 4
+            if d < best_dist:
+                best_dist = d
+                best_perm = list(perm)
 
-        dist = _corner_distance(pred_pts, true_pts)
-        distances.append(dist)
-
-        diag = (w ** 2 + h ** 2) ** 0.5
-        ok = dist < tolerance_pct * diag
+        distances.append(best_dist)
+        diag = math.hypot(w, h)
+        ok = best_dist < tolerance_pct * diag
         if ok:
             within_tol += 1
 
-        per_image.append({"stem": img_path.stem, "detected": True, "dist": round(dist, 2), "within_tol": ok})
+        per_image.append({
+            "stem": img_path.stem,
+            "detected": True,
+            "dist": round(best_dist, 2),
+            "within_tol": ok,
+        })
 
-        # Visualise
+        # Visualisation with matched pairs + connecting lines
         if viz_count < max_viz:
             vis = img.copy()
-            for (x, y) in true_pts:
-                cv2.circle(vis, (int(x), int(y)), 6, (0, 255, 0), -1)
-            for (x, y) in pred_pts:
-                cv2.circle(vis, (int(x), int(y)), 6, (0, 0, 255), -1)
-            cv2.putText(vis, f"dist={dist:.1f}px", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+            matched_pred = pred_pts[best_perm]
+            for i in range(4):
+                tx, ty = int(true_pts[i, 0]), int(true_pts[i, 1])
+                px, py = int(matched_pred[i, 0]), int(matched_pred[i, 1])
+                cv2.line(vis, (tx, ty), (px, py), (0, 255, 255), 2)
+                cv2.circle(vis, (tx, ty), 7, (0, 255, 0), -1)   # green = true
+                cv2.circle(vis, (px, py), 7, (0, 0, 255), -1)   # red = pred
+                err = math.hypot(px - tx, py - ty)
+                cv2.putText(vis, f"{err:.0f}", (tx + 5, ty - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+            label = "OK" if ok else "BAD"
+            cv2.putText(vis, f"mean={best_dist:.1f}px {label}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
             cv2.imwrite(str(viz_dir / f"{img_path.stem}_eval.jpg"), vis)
             viz_count += 1
 
