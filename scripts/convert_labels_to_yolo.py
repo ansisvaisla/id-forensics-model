@@ -11,6 +11,10 @@ Output structure:
         labels/all/<stem>.txt        # 0 (screen) or 1 (not_screen)
         data.yaml                    # classification task
 
+    data/id_type/
+        all/<class_name>/<stem>.jpg  # ImageFolder layout for EfficientNet
+        manifest.csv                 # stem, class columns for split script
+
 Corner keypoints are the 4 polygon points from Label Studio in order:
   TL, TR, BR, BL  (the polygon order the user drew them in)
 
@@ -24,6 +28,7 @@ Images are resolved from data/raw/** by matching the flat filename.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import shutil
 import sys
@@ -33,6 +38,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPORT_FILE = PROJECT_ROOT / "data" / "labels" / "label_studio_export.json"
 YOLO_CORNERS_DIR = PROJECT_ROOT / "data" / "yolo" / "corners"
 YOLO_SCREEN_DIR = PROJECT_ROOT / "data" / "yolo" / "screen"
+ID_TYPE_DIR = PROJECT_ROOT / "data" / "id_type"
+
+ID_TYPE_CLASSES = (
+    "legacy",
+    "maisha",
+    "huduma",
+    "passport",
+    "driving_licence",
+    "foreign_document",
+    "unknown_id",
+)
 
 # All directories that may contain downloaded images
 RAW_ROOTS = [
@@ -242,6 +258,86 @@ def convert_screen(tasks: list[dict], image_index: dict[str, Path], dry_run: boo
     print(f"Screen: {pos} positives (screen), {neg} negatives (live), {skipped} skipped")
 
 
+def convert_id_type(tasks: list[dict], image_index: dict[str, Path], dry_run: bool = False) -> None:
+    """Export ID type classification dataset as ImageFolder structure.
+
+    Output: data/id_type/all/<class>/<stem>.jpg + manifest.csv
+    Classes: legacy, maisha, huduma, passport, driving_licence, foreign_document, unknown_id
+
+    Only annotated, non-cancelled tasks with a recognised id_type choice are included.
+    When multiple annotations exist, the first non-cancelled one wins.
+    """
+    out_root = ID_TYPE_DIR / "all"
+    if not dry_run:
+        for cls in ID_TYPE_CLASSES:
+            (out_root / cls).mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    skipped_no_type = 0
+    skipped_unknown_type = 0
+    skipped_no_image = 0
+    manifest_rows: list[tuple[str, str]] = []
+
+    for task in tasks:
+        anns = task.get("annotations") or []
+        real_anns = [a for a in anns if not a.get("was_cancelled", False)]
+        if not real_anns:
+            continue
+
+        id_type: str | None = None
+        for ann in real_anns:
+            for r in ann.get("result", []):
+                if r.get("type") == "choices" and r.get("from_name") == "id_type":
+                    choices = r.get("value", {}).get("choices", [])
+                    if choices:
+                        id_type = choices[0]
+                        break
+            if id_type:
+                break
+
+        if id_type is None:
+            skipped_no_type += 1
+            continue
+
+        # Normalise label to snake_case (Label Studio uses spaces/camelCase sometimes)
+        id_type_norm = id_type.lower().replace(" ", "_")
+        if id_type_norm not in ID_TYPE_CLASSES:
+            skipped_unknown_type += 1
+            continue
+
+        flat = _flat_name(task.get("file_upload", ""))
+        img_path = image_index.get(flat)
+        if img_path is None:
+            skipped_no_image += 1
+            continue
+
+        stem = Path(flat).stem
+        if not dry_run:
+            dest = out_root / id_type_norm / flat
+            if not dest.exists():
+                shutil.copy2(img_path, dest)
+        manifest_rows.append((stem, id_type_norm))
+        written += 1
+
+    if not dry_run and manifest_rows:
+        manifest_path = ID_TYPE_DIR / "manifest.csv"
+        with manifest_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["stem", "class"])
+            writer.writerows(manifest_rows)
+
+    # Print class distribution
+    from collections import Counter
+    dist = Counter(r[1] for r in manifest_rows)
+    print(f"ID type: {written} images written, {skipped_no_type} no label, "
+          f"{skipped_unknown_type} unknown type, {skipped_no_image} image not found")
+    print("  Distribution:")
+    for cls in ID_TYPE_CLASSES:
+        n = dist.get(cls, 0)
+        bar = "#" * min(n // 5, 40)
+        print(f"    {cls:20s}: {n:4d}  {bar}")
+
+
 def _write_corners_yaml() -> None:
     yaml_content = (
         "path: ../data/yolo/corners\n"
@@ -279,8 +375,10 @@ def main() -> int:
     parser.add_argument("--export", type=Path, default=EXPORT_FILE)
     parser.add_argument("--corners", action="store_true", default=True, help="Convert corner polygons")
     parser.add_argument("--screen", action="store_true", default=True, help="Convert screen labels")
+    parser.add_argument("--id-type", action="store_true", default=True, help="Convert id_type labels")
     parser.add_argument("--no-corners", dest="corners", action="store_false")
     parser.add_argument("--no-screen", dest="screen", action="store_false")
+    parser.add_argument("--no-id-type", dest="id_type", action="store_false")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -299,12 +397,15 @@ def main() -> int:
         convert_corners(tasks, image_index, dry_run=args.dry_run)
     if args.screen:
         convert_screen(tasks, image_index, dry_run=args.dry_run)
+    if args.id_type:
+        convert_id_type(tasks, image_index, dry_run=args.dry_run)
 
     if args.dry_run:
         print("Dry run — no files written.")
     else:
         print(f"\nCorners output: {YOLO_CORNERS_DIR}")
         print(f"Screen output:  {YOLO_SCREEN_DIR}")
+        print(f"ID type output: {ID_TYPE_DIR}")
         print("\nNext step: run scripts/split_yolo_dataset.py to create train/val/test splits.")
 
     return 0

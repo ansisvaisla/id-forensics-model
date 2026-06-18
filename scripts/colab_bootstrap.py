@@ -6,6 +6,7 @@ Drive layout (create once in Google Drive):
         outputs/
             stage1_best.pt
             stage2_best.pt
+            stage4_best.pt
 
 Usage in a notebook (after clone):
     import sys
@@ -33,6 +34,7 @@ REPO_NAME = "id-forensics-model"
 WEIGHT_TARGETS: dict[str, tuple[str, str]] = {
     "stage1": ("models/stage1_corners/weights/best.pt", "stage1_best.pt"),
     "stage2": ("models/stage2_screen/best.pt", "stage2_best.pt"),
+    "stage4": ("models/stage4_id_type/best.pt", "stage4_best.pt"),
 }
 
 
@@ -124,9 +126,11 @@ def extract_data() -> None:
         zf.extractall(".")
     n_corners = len(list(Path("data/yolo/corners/images/train").glob("*.jpg")))
     n_screen = len(list(Path("data/yolo/screen/images/train").glob("*.jpg")))
+    n_id_type = len(list(Path("data/id_type/train").rglob("*.jpg")))
     print(f"Repo ready: {os.getcwd()}")
     print(f"  corners train images: {n_corners}")
     print(f"  screen train images:  {n_screen}")
+    print(f"  id_type train images: {n_id_type}")
 
 
 def install_deps() -> None:

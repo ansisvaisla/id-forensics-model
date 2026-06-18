@@ -20,7 +20,9 @@ if (-not $SkipPack) {
     Write-Host "`n[1/3] Convert labels + split + pack..." -ForegroundColor Yellow
     & .\venv\Scripts\python.exe scripts\convert_labels_to_yolo.py
     & .\venv\Scripts\python.exe scripts\split_yolo_dataset.py
-    & .\venv\Scripts\python.exe scripts\pack_for_home.py
+    & .\venv\Scripts\python.exe scripts\split_id_type_dataset.py
+    # Pack with stage1 model included — Colab needs it to deskew id_type images before stage4 training
+    & .\venv\Scripts\python.exe scripts\pack_for_home.py --include-stage1
     $zip = Join-Path $Root "id_forensics_home_data.zip"
     if (Test-Path $zip) {
         $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)

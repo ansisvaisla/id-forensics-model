@@ -35,12 +35,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # Paths included in every pack
 DATA_PATHS = [
     PROJECT_ROOT / "data" / "yolo",
+    PROJECT_ROOT / "data" / "id_type",
     PROJECT_ROOT / "data" / "labels",
 ]
 
 MODEL_GLOBS = [
     "models/stage1_corners/weights/best.pt",
     "models/stage2_screen/best.pt",
+    "models/stage4_id_type/best.pt",
 ]
 
 
@@ -73,7 +75,12 @@ def main() -> int:
     parser.add_argument(
         "--include-models",
         action="store_true",
-        help="Also pack models/stage1_corners and models/stage2_screen weights",
+        help="Also pack models/ weights (stage1, stage2, stage4)",
+    )
+    parser.add_argument(
+        "--include-stage1",
+        action="store_true",
+        help="Pack stage1 model weights (needed for deskew_id_type_images.py in Colab)",
     )
     args = parser.parse_args()
 
@@ -92,21 +99,24 @@ def main() -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     print(f"Packing -> {args.out}")
 
+    globs_to_pack = list(MODEL_GLOBS) if args.include_models else []
+    if args.include_stage1 and not args.include_models:
+        globs_to_pack = ["models/stage1_corners/weights/best.pt"]
+
     with zipfile.ZipFile(args.out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for p in DATA_PATHS:
             n = _add_path(zf, p)
             print(f"  {p.relative_to(PROJECT_ROOT)}: {n} files")
             total += n
 
-        if args.include_models:
-            for pattern in MODEL_GLOBS:
-                mp = PROJECT_ROOT / pattern
-                if mp.is_file():
-                    zf.write(mp, pattern)
-                    total += 1
-                    print(f"  {pattern}: 1 file")
-                else:
-                    print(f"  SKIP (missing): {pattern}", file=sys.stderr)
+        for pattern in globs_to_pack:
+            mp = PROJECT_ROOT / pattern
+            if mp.is_file():
+                zf.write(mp, pattern)
+                total += 1
+                print(f"  {pattern}: 1 file")
+            else:
+                print(f"  SKIP (missing): {pattern}", file=sys.stderr)
 
     size_mb = args.out.stat().st_size / (1024 * 1024)
     print(f"Done: {total} files, {size_mb:.1f} MB")

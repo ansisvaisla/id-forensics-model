@@ -5,7 +5,7 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("stage1", "stage2")]
+    [ValidateSet("stage1", "stage2", "stage4")]
     [string]$Stage,
 
     [string]$SourcePath = ""
@@ -18,11 +18,13 @@ Set-Location $Root
 $destMap = @{
     stage1 = "models\stage1_corners\weights\best.pt"
     stage2 = "models\stage2_screen\best.pt"
+    stage4 = "models\stage4_id_type\best.pt"
 }
 
 $defaultNames = @{
     stage1 = "stage1_best.pt"
     stage2 = "stage2_best.pt"
+    stage4 = "stage4_best.pt"
 }
 
 if (-not $SourcePath) {
@@ -53,6 +55,8 @@ Write-Host "`nCopied ($mb MB). Evaluate with:" -ForegroundColor Green
 
 if ($Stage -eq "stage1") {
     Write-Host "  .\venv\Scripts\python.exe scripts\evaluate_models.py --stage corners" -ForegroundColor White
+} elseif ($Stage -eq "stage4") {
+    Write-Host "  .\venv\Scripts\python.exe scripts\evaluate_models.py --stage id_type" -ForegroundColor White
 } else {
     Write-Host "  .\venv\Scripts\python.exe scripts\evaluate_models.py --stage screen" -ForegroundColor White
 }
