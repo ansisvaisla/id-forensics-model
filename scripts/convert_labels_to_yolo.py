@@ -51,6 +51,22 @@ RAW_ROOTS_RECURSIVE = [
 SCREEN_NEGATIVE_QUALITY = {"good_front", "partial", "blurry", "back"}
 SCREEN_POSITIVE_QUALITY = {"screen"}
 
+# Threshold: corners are "full-frame placeholder" if they span nearly the whole image.
+# These partial images were labeled with border corners instead of real card corners.
+_FULLFRAME_MIN_SPAN = 0.85  # max(xs)-min(xs) or max(ys)-min(ys) > this = bad
+
+
+def _is_fullframe_polygon(pts: list[list[float]]) -> bool:
+    """Return True if polygon corners span almost the entire image (bad placeholder label)."""
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return (
+        min(xs) < 5
+        and (max(xs) - min(xs)) / 100 > _FULLFRAME_MIN_SPAN
+        and min(ys) < 10
+        and (max(ys) - min(ys)) / 100 > _FULLFRAME_MIN_SPAN
+    )
+
 
 def _build_image_index() -> dict[str, Path]:
     """Map flat filename (e.g. '2023_05_18_7d362338.jpg') -> full path."""
@@ -106,6 +122,7 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
     skipped_cancelled = 0
     skipped_no_poly = 0
     skipped_no_image = 0
+    skipped_fullframe = 0
 
     for task in tasks:
         anns = task.get("annotations") or []
@@ -127,6 +144,11 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
 
         if polygon is None:
             skipped_no_poly += 1
+            continue
+
+        pts = polygon["value"]["points"]
+        if _is_fullframe_polygon(pts):
+            skipped_fullframe += 1
             continue
 
         flat = _flat_name(task.get("file_upload", ""))
@@ -160,7 +182,8 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
         _write_corners_yaml()
 
     print(f"Corners: {written} written, {skipped_cancelled} cancelled, "
-          f"{skipped_no_poly} no polygon, {skipped_no_image} image not found on disk")
+          f"{skipped_no_poly} no polygon, {skipped_fullframe} fullframe-partial skipped, "
+          f"{skipped_no_image} image not found on disk")
 
 
 def convert_screen(tasks: list[dict], image_index: dict[str, Path], dry_run: bool = False) -> None:
