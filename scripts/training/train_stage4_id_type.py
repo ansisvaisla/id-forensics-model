@@ -168,7 +168,11 @@ def main() -> int:
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-    device = torch.device(args.device)
+    # Normalise device string: "0" → "cuda:0", "cuda" stays, "cpu" stays
+    device_str = args.device
+    if device_str.isdigit():
+        device_str = f"cuda:{device_str}"
+    device = torch.device(device_str)
 
     train_ds = _build_dataset("train", augment=True)
     val_ds = _build_dataset("val", augment=False)
