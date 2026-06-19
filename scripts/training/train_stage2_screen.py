@@ -1,11 +1,10 @@
-"""Train Stage 2 — Screen replay binary classifier (EfficientNet-B0).
+"""Train Stage 2 — Presentation Attack classifier (EfficientNet-B0).
 
-Positives: screen (class 0)
-Negatives: live genuine ID — good_front, partial, blurry, back (class 1)
+3 classes: screen (0), printout (1), live (2).
 
 Usage:
     python scripts/training/train_stage2_screen.py
-    python scripts/training/train_stage2_screen.py --epochs 30 --device cuda
+    python scripts/training/train_stage2_screen.py --epochs 40 --device cuda
 
 Output: models/stage2_screen/best.pt
 """
@@ -14,6 +13,7 @@ from __future__ import annotations
 import argparse
 import random
 import sys
+from collections import Counter
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,7 +23,9 @@ OUTPUT_DIR = PROJECT_ROOT / "models" / "stage2_screen"
 _IMG_SIZE = 224
 _BATCH = 32
 _LR = 1e-4
-_PATIENCE = 7
+_PATIENCE = 10
+_NUM_CLASSES = 3
+_CLASS_NAMES = ("screen", "printout", "live")
 
 
 def _build_dataset(split: str, augment: bool):
@@ -79,11 +81,7 @@ def _build_dataset(split: str, augment: bool):
 
 
 def _build_model(pretrained: bool):
-    """Build EfficientNet-B0 with 2-class head.
-
-    Uses torchvision (PyTorch CDN) — avoids Hugging Face download that often
-    hangs on corporate networks. Falls back to random init if download fails.
-    """
+    """Build EfficientNet-B0 with 3-class head."""
     import torch.nn as nn  # type: ignore
     from torchvision.models import EfficientNet_B0_Weights, efficientnet_b0  # type: ignore
 
@@ -99,13 +97,26 @@ def _build_model(pretrained: bool):
         model = efficientnet_b0(weights=None)
 
     in_features = model.classifier[1].in_features
-    model.classifier[1] = nn.Linear(in_features, 2)
+    model.classifier[1] = nn.Linear(in_features, _NUM_CLASSES)
     return model
 
 
+def _compute_class_weights(samples: list[tuple[Path, int]], device) -> "torch.Tensor":
+    """Inverse-frequency weights to handle class imbalance (printout is rare)."""
+    import torch  # type: ignore
+
+    counts = Counter(lbl for _, lbl in samples)
+    total = len(samples)
+    weights = [total / (len(counts) * counts.get(c, 1)) for c in range(_NUM_CLASSES)]
+    print("Class distribution:")
+    for i, name in enumerate(_CLASS_NAMES):
+        print(f"  {name:10s}: {counts.get(i, 0):4d}  weight={weights[i]:.3f}")
+    return torch.tensor(weights, dtype=torch.float32).to(device)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Train Stage 2 screen classifier")
-    parser.add_argument("--epochs", type=int, default=30)
+    parser = argparse.ArgumentParser(description="Train Stage 2 presentation attack classifier")
+    parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch", type=int, default=_BATCH)
     parser.add_argument("--lr", type=float, default=_LR)
     parser.add_argument("--device", default="cpu")
@@ -113,9 +124,14 @@ def main() -> int:
     parser.add_argument(
         "--no-pretrained",
         action="store_true",
-        help="Skip ImageNet weight download (use if HF/torchvision CDN is blocked)",
+        help="Skip ImageNet weight download (use if torchvision CDN is blocked)",
     )
     args = parser.parse_args()
+
+    # Normalise bare digit device string ("0" -> "cuda:0")
+    raw_dev = args.device.strip()
+    if raw_dev.isdigit():
+        raw_dev = f"cuda:{raw_dev}"
 
     if not (DATA_DIR / "images" / "train").is_dir():
         print(f"Train split not found: {DATA_DIR}", file=sys.stderr)
@@ -132,11 +148,12 @@ def main() -> int:
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-    device = torch.device(args.device)
+    device = torch.device(raw_dev)
 
     train_ds = _build_dataset("train", augment=True)
     val_ds = _build_dataset("val", augment=False)
     print(f"Train: {len(train_ds)}  Val: {len(val_ds)}")
+    weight = _compute_class_weights(train_ds.samples, device)
 
     train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=0)
@@ -144,10 +161,6 @@ def main() -> int:
     model = _build_model(pretrained=not args.no_pretrained)
     model = model.to(device)
 
-    # Class weights: positives (screen) are minority
-    n_pos = sum(1 for _, lbl in train_ds.samples if lbl == 0)
-    n_neg = len(train_ds) - n_pos
-    weight = torch.tensor([n_neg / n_pos, 1.0], dtype=torch.float32).to(device)
     criterion = nn.CrossEntropyLoss(weight=weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
@@ -168,7 +181,6 @@ def main() -> int:
             total_loss += loss.item()
         scheduler.step()
 
-        # Validation
         model.eval()
         correct = total = 0
         with torch.no_grad():

@@ -2,8 +2,7 @@
 
 Entry point: run(image) -> PresentationAttackResult
 
-Screen replay: EfficientNet-B0 fine-tuned on screen vs live labels.
-Printout: deferred to v2 — returns is_printout=False, printout_score=0.0.
+3-class EfficientNet-B0: screen (0) / printout (1) / live (2).
 
 Shadow mode: exceptions are caught by orchestration layer.
 """
@@ -18,20 +17,23 @@ from orchestration.results import PresentationAttackResult
 SCREEN_MODEL_PATH = (
     Path(__file__).resolve().parents[1] / "models" / "stage2_screen" / "best.pt"
 )
-_SCREEN_THRESHOLD = 0.55  # tuned from threshold sweep: best F1 0.897 at 0.55 vs 0.875 at 0.50
+_NUM_CLASSES = 3
+# Thresholds: flag attack if probability exceeds these values
+_SCREEN_THRESHOLD = 0.50
+_PRINTOUT_THRESHOLD = 0.50
 
 _screen_model = None
 
 
 def _load_screen_model():
-    """Lazy-load screen classifier. Raises if model file missing."""
+    """Lazy-load Stage 2 classifier. Raises if model file missing."""
     import torch  # type: ignore
     import torch.nn as nn  # type: ignore
     from torchvision.models import efficientnet_b0  # type: ignore
 
     model = efficientnet_b0(weights=None)
     in_features = model.classifier[1].in_features
-    model.classifier[1] = nn.Linear(in_features, 2)
+    model.classifier[1] = nn.Linear(in_features, _NUM_CLASSES)
     state = torch.load(str(SCREEN_MODEL_PATH), map_location="cpu", weights_only=True)
     model.load_state_dict(state)
     model.eval()
@@ -68,8 +70,8 @@ def run(image: np.ndarray) -> PresentationAttackResult:
         image: BGR numpy array (cropped or full — runs on raw upload in shadow mode).
 
     Returns:
-        PresentationAttackResult with is_screen_replay and screen_score.
-        is_printout is always False in v1 (deferred).
+        PresentationAttackResult with is_screen_replay, is_printout, and per-class scores.
+        Classes: 0=screen, 1=printout, 2=live.
     """
     if not SCREEN_MODEL_PATH.is_file():
         return PresentationAttackResult(
@@ -88,14 +90,23 @@ def run(image: np.ndarray) -> PresentationAttackResult:
     with torch.no_grad():
         logits = model(tensor)
         probs = F.softmax(logits, dim=1)[0]
-    # class 0 = screen, class 1 = live (mirrors split_yolo_dataset labels)
+
     screen_prob = float(probs[0])
+    printout_prob = float(probs[1])
     is_screen = screen_prob >= _SCREEN_THRESHOLD
+    is_printout = printout_prob >= _PRINTOUT_THRESHOLD
+
+    if is_screen:
+        label = "screen"
+    elif is_printout:
+        label = "printout"
+    else:
+        label = "live"
 
     return PresentationAttackResult(
         is_screen_replay=is_screen,
-        is_printout=False,
+        is_printout=is_printout,
         screen_score=screen_prob,
-        printout_score=0.0,
-        label="screen" if is_screen else "live",
+        printout_score=printout_prob,
+        label=label,
     )

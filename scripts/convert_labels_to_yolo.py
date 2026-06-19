@@ -66,6 +66,11 @@ RAW_ROOTS_RECURSIVE = [
 
 SCREEN_NEGATIVE_QUALITY = {"good_front", "partial", "blurry", "back"}
 SCREEN_POSITIVE_QUALITY = {"screen"}
+PRINTOUT_QUALITY = {"printout"}
+
+# Stage 2 class indices
+# 0 = screen  1 = printout  2 = live
+STAGE2_CLASSES = ("screen", "printout", "live")
 
 # Threshold: corners are "full-frame placeholder" if they span nearly the whole image.
 # These partial images were labeled with border corners instead of real card corners.
@@ -203,15 +208,14 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
 
 
 def convert_screen(tasks: list[dict], image_index: dict[str, Path], dry_run: bool = False) -> None:
-    """Export screen classification dataset (binary: screen=0, not_screen=1)."""
+    """Export Stage 2 classification dataset (3-class: screen=0, printout=1, live=2)."""
     out_images = YOLO_SCREEN_DIR / "images" / "all"
     out_labels = YOLO_SCREEN_DIR / "labels" / "all"
     if not dry_run:
         out_images.mkdir(parents=True, exist_ok=True)
         out_labels.mkdir(parents=True, exist_ok=True)
 
-    pos = 0
-    neg = 0
+    counts: dict[int, int] = {0: 0, 1: 0, 2: 0}
     skipped = 0
 
     for task in tasks:
@@ -228,8 +232,10 @@ def convert_screen(tasks: list[dict], image_index: dict[str, Path], dry_run: boo
 
         if quality_vals & SCREEN_POSITIVE_QUALITY:
             label = 0  # screen
+        elif quality_vals & PRINTOUT_QUALITY:
+            label = 1  # printout
         elif quality_vals & SCREEN_NEGATIVE_QUALITY:
-            label = 1  # not_screen (live ID)
+            label = 2  # live genuine ID
         else:
             skipped += 1
             continue
@@ -245,17 +251,18 @@ def convert_screen(tasks: list[dict], image_index: dict[str, Path], dry_run: boo
             dest_img = out_images / flat
             if not dest_img.exists():
                 shutil.copy2(img_path, dest_img)
+            # Always overwrite labels to propagate class-mapping changes
             (out_labels / f"{stem}.txt").write_text(f"{label}\n", encoding="utf-8")
 
-        if label == 0:
-            pos += 1
-        else:
-            neg += 1
+        counts[label] += 1
 
     if not dry_run:
         _write_screen_yaml()
 
-    print(f"Screen: {pos} positives (screen), {neg} negatives (live), {skipped} skipped")
+    print(
+        f"Stage 2: screen={counts[0]}, printout={counts[1]}, live={counts[2]}, "
+        f"skipped={skipped}"
+    )
 
 
 def convert_id_type(tasks: list[dict], image_index: dict[str, Path], dry_run: bool = False) -> None:
@@ -363,7 +370,8 @@ def _write_screen_yaml() -> None:
         "\n"
         "names:\n"
         "  0: screen\n"
-        "  1: live\n"
+        "  1: printout\n"
+        "  2: live\n"
         "\n"
         "task: classify\n"
     )
