@@ -2,11 +2,17 @@
 
 Drive layout (create once in Google Drive):
     My Drive/id-forensics/
-        id_forensics_home_data.zip
+        id_forensics_home_data.zip   ← fallback: pack_for_home.py output
         outputs/
             stage1_best.pt
             stage2_best.pt
             stage4_best.pt
+
+AWS S3 setup (preferred for images):
+    Store four Colab Secrets (🔑 in left sidebar):
+        AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+        AWS_DEFAULT_REGION, S3_BUCKET_NAME
+    Then call cb.download_from_s3() instead of cb.extract_data().
 
 Usage in a notebook (after clone):
     import sys
@@ -36,6 +42,12 @@ WEIGHT_TARGETS: dict[str, tuple[str, str]] = {
     "stage2": ("models/stage2_screen/best.pt", "stage2_best.pt"),
     "stage4": ("models/stage4_id_type/best.pt", "stage4_best.pt"),
 }
+
+# S3 prefixes to sync down (relative to bucket root → local data/)
+_S3_SYNC_TARGETS: list[tuple[str, str]] = [
+    ("data/raw/", "data/raw/"),
+    ("data/labels/", "data/labels/"),
+]
 
 
 def check_gpu() -> None:
@@ -133,12 +145,96 @@ def extract_data() -> None:
     print(f"  id_type train images: {n_id_type}")
 
 
+def _get_s3_secret(name: str) -> str:
+    """Read a secret from Colab Secrets. Raises clear error if missing."""
+    try:
+        from google.colab import userdata  # type: ignore[import-untyped]
+        return userdata.get(name)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Colab Secret '{name}' not found.\n"
+            "Add it in Colab: left sidebar → 🔑 Secrets → New secret.\n"
+            f"  ({exc})"
+        ) from exc
+
+
+def download_from_s3(
+    rebuild_splits: bool = True,
+    run_convert: bool = True,
+) -> None:
+    """Pull raw images + label export directly from S3 using Colab Secrets.
+
+    Reads AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION,
+    S3_BUCKET_NAME from Colab Secrets — credentials never appear in the notebook.
+
+    Args:
+        rebuild_splits: Re-run convert_labels + split scripts after download.
+        run_convert:    Run convert_labels_to_yolo.py (set False to skip if labels
+                        are already up-to-date).
+    """
+    import boto3  # type: ignore[import-untyped]
+
+    key_id = _get_s3_secret("AWS_ACCESS_KEY_ID")
+    secret = _get_s3_secret("AWS_SECRET_ACCESS_KEY")
+    region = _get_s3_secret("AWS_DEFAULT_REGION")
+    bucket = _get_s3_secret("S3_BUCKET_NAME")
+
+    session = boto3.Session(
+        aws_access_key_id=key_id,
+        aws_secret_access_key=secret,
+        region_name=region,
+    )
+    s3 = session.client("s3")
+
+    os.chdir(REPO_DIR)
+    total = 0
+    for s3_prefix, local_prefix in _S3_SYNC_TARGETS:
+        local_dir = REPO_DIR / local_prefix
+        local_dir.mkdir(parents=True, exist_ok=True)
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=s3_prefix):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                rel = key[len(s3_prefix):]
+                if not rel:
+                    continue
+                dest = local_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if not dest.exists() or dest.stat().st_size != obj["Size"]:
+                    s3.download_file(bucket, key, str(dest))
+                    total += 1
+        print(f"  s3://{bucket}/{s3_prefix}  ->  {local_prefix}  ({total} new files)")
+
+    print(f"S3 sync done. {total} files downloaded.")
+
+    if run_convert:
+        print("Running convert_labels_to_yolo.py ...")
+        subprocess.run(
+            [sys.executable, "scripts/convert_labels_to_yolo.py"],
+            check=True,
+            cwd=REPO_DIR,
+        )
+
+    if rebuild_splits:
+        print("Rebuilding train/val/test splits ...")
+        subprocess.run(
+            [sys.executable, "scripts/split_yolo_dataset.py", "--dataset", "both"],
+            check=True,
+            cwd=REPO_DIR,
+        )
+        subprocess.run(
+            [sys.executable, "scripts/split_id_type_dataset.py", "--source", "all_deskewed"],
+            check=True,
+            cwd=REPO_DIR,
+        )
+
+
 def install_deps() -> None:
     """Install Python deps and run verify_home_setup."""
     os.chdir(REPO_DIR)
     subprocess.run(
         [sys.executable, "-m", "pip", "install", "-q",
-         "ultralytics", "opencv-python-headless", "timm", "python-dotenv"],
+         "ultralytics", "opencv-python-headless", "timm", "python-dotenv", "boto3"],
         check=True,
     )
     subprocess.run([sys.executable, "scripts/verify_home_setup.py"], check=True)

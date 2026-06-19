@@ -3,8 +3,8 @@
 For corners: image-level random split 70/15/15 (no client_id available in export).
 For screen: stratified split by class label to keep class ratio balanced.
 
-Moves images+labels from images/all and labels/all into images/{split} and labels/{split}.
-Idempotent — safe to re-run; skips already-split files.
+Copies images+labels from images/all and labels/all into images/{split} and labels/{split}.
+Existing split folders are wiped first to prevent stale files from old label formats bleeding in.
 """
 from __future__ import annotations
 
@@ -79,6 +79,11 @@ def split_dataset(dataset_dir: Path, seed: int, stratify: bool) -> None:
     for split, split_stems in buckets.items():
         img_out = dataset_dir / "images" / split
         lbl_out = dataset_dir / "labels" / split
+        # Wipe stale files so old label format can't bleed in from a previous split
+        if img_out.is_dir():
+            shutil.rmtree(img_out)
+        if lbl_out.is_dir():
+            shutil.rmtree(lbl_out)
         img_out.mkdir(parents=True, exist_ok=True)
         lbl_out.mkdir(parents=True, exist_ok=True)
         moved = 0
