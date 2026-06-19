@@ -94,6 +94,48 @@ Download from the shared drive / S3 artifact bucket and place at the paths above
 
 ---
 
+## Batch labeling loop
+
+`scripts/batch_label.py` automates the label → train cycle:
+
+1. Queries postgres2 for recent ID-front images not yet in the label export
+2. Runs the pipeline on each → generates Label Studio pre-annotations
+3. Writes `data/batches/<timestamp>_batch.json` — import this into Label Studio
+
+```powershell
+# Generate a batch of 1000 pre-annotated tasks (looks back 30 days)
+python scripts/batch_label.py --limit 1000 --hours 720
+
+# Faster — no pipeline inference, fully manual labeling
+python scripts/batch_label.py --limit 1000 --skip-inference
+```
+
+In Label Studio: **Import** → select the JSON file → skim predictions → correct wrong ones → **Export JSON** → save as `data/labels/label_studio_export.json`.
+
+Then push and retrain:
+
+```powershell
+.\scripts\sync_to_cloud.ps1 -Message "batch labels"
+# Colab workbench: SYNC_IMAGES=True, REBUILD_DATASET=True → retrain
+```
+
+**Pre-annotation quality mapping:**
+
+| Pipeline output | LS `quality` label |
+|---|---|
+| `is_screen_replay` | `screen` |
+| `is_printout` | `printout` |
+| `crop.label == selfie_instead_of_document` | `selfie` |
+| `crop.label == no_id_detected` | `garbage` |
+| `is_partial_document` | `partial` |
+| clean ID | `good_front` |
+
+`id_type` is pre-filled from Stage 4 (legacy / maisha / huduma / passport / …).
+
+If any model weights are missing the task is still imported — just without predictions.
+
+---
+
 ## Training
 
 ### Stage 1 — Corner detector (YOLOv8-OBB)
