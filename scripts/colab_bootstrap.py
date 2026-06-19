@@ -409,14 +409,30 @@ def run_batch_label(
     cmd = [
         sys.executable,
         "scripts/batch_label.py",
-        "--limit", str(limit),
-        "--hours", str(hours),
-        "--url-expiry", str(url_expiry),
+        "--limit",
+        str(limit),
+        "--hours",
+        str(hours),
+        "--url-expiry",
+        str(url_expiry),
     ]
     if skip_inference:
         cmd.append("--skip-inference")
 
-    subprocess.run(cmd, check=True, cwd=REPO_DIR)
+    try:
+        # Capture output so we can show a helpful error in the notebook if it fails
+        proc = subprocess.run(cmd, check=True, cwd=REPO_DIR, capture_output=True, text=True)
+        if proc.stdout:
+            print(proc.stdout)
+    except subprocess.CalledProcessError as exc:
+        # Show stderr to help debugging inside the Colab cell
+        err = exc.stderr or str(exc)
+        print("Batch label script failed with return code", exc.returncode)
+        print("=== STDERR ===")
+        print(err)
+        print("=== STDOUT ===")
+        print(exc.stdout or "")
+        raise RuntimeError(f"batch_label.py failed (rc={exc.returncode})\n{err}") from exc
 
     # Find the most-recent batch JSON written to Drive
     batch_files = sorted(DRIVE_BATCHES_DIR.glob("*_batch.json"), reverse=True)
