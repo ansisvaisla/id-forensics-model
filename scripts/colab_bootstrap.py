@@ -6,6 +6,7 @@ Google Drive (persistent across sessions):
     My Drive/id-forensics/
         data/raw/id_doc_front_flat/   ← labeled images, synced from S3 once
         outputs/                       ← trained weights
+        eval/                            ← evaluation reports + viz images
 
 GitHub (code + labels):
     scripts/, notebooks/, data/labels/label_studio_export.json, etc.
@@ -40,6 +41,7 @@ DRIVE_FOLDER = "id-forensics"
 DRIVE_ROOT = Path(f"/content/drive/MyDrive/{DRIVE_FOLDER}")
 DRIVE_RAW_DIR = DRIVE_ROOT / "data" / "raw" / "id_doc_front_flat"
 OUTPUTS_DIR = DRIVE_ROOT / "outputs"
+EVAL_DIR = DRIVE_ROOT / "eval"
 REPO_DIR = Path("/content/id-forensics-model")
 GITHUB_USER = "ansisvaisla"
 REPO_NAME = "id-forensics-model"
@@ -73,6 +75,7 @@ def mount_drive() -> None:
     DRIVE_ROOT.mkdir(parents=True, exist_ok=True)
     DRIVE_RAW_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    EVAL_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Drive mounted: {DRIVE_ROOT}")
 
 
@@ -348,3 +351,30 @@ def save_weights(stage: str) -> Path:
     shutil.copy2(src, dst)
     print(f"Saved {drive_name} to Drive ({dst.stat().st_size / 1e6:.1f} MB)")
     return dst
+
+
+def run_eval(stage: str, split: str = "val") -> Path:
+    """Run evaluate_models.py and save all outputs to Drive (persistent).
+
+    Returns the eval run directory on Drive.
+    """
+    EVAL_DIR.mkdir(parents=True, exist_ok=True)
+    os.chdir(REPO_DIR)
+    cmd = [
+        sys.executable,
+        "scripts/evaluate_models.py",
+        "--stage", stage,
+        "--split", split,
+        "--output-dir", str(EVAL_DIR),
+    ]
+    subprocess.run(cmd, check=True, cwd=REPO_DIR)
+
+    # Find the latest run dir for this stage
+    stage_dirs = sorted((EVAL_DIR / stage).glob("*"), reverse=True)
+    if not stage_dirs:
+        raise FileNotFoundError(f"No eval output found under {EVAL_DIR / stage}")
+    latest = stage_dirs[0]
+    print(f"Eval saved to Drive: {latest}")
+    print(f"  wrong images: {latest / 'viz' / 'wrong'}")
+    print(f"  report:       {latest / 'report.txt'}")
+    return latest

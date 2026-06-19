@@ -41,7 +41,18 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-EVAL_ROOT = PROJECT_ROOT / "data" / "eval"
+# Default eval root — override with set_eval_root() or --output-dir
+_EVAL_ROOT = PROJECT_ROOT / "data" / "eval"
+
+
+def set_eval_root(path: Path | str) -> None:
+    """Override where evaluation outputs are written (e.g. Google Drive on Colab)."""
+    global _EVAL_ROOT
+    _EVAL_ROOT = Path(path)
+
+
+def get_eval_root() -> Path:
+    return _EVAL_ROOT
 
 # Model paths
 STAGE1_MODEL = PROJECT_ROOT / "models" / "stage1_corners" / "weights" / "best.pt"
@@ -57,7 +68,8 @@ STAGE4_CLASSES = (
     "legacy", "maisha", "huduma", "passport",
     "driving_licence", "foreign_document", "unknown_id",
 )
-STAGE2_CLASSES = ("screen", "live")
+STAGE2_CLASSES = ("screen", "printout", "live")
+_NUM_STAGE2 = len(STAGE2_CLASSES)
 
 THUMB = 280
 BORDER = 6
@@ -68,7 +80,7 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 def _make_run_dir(stage: str) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    d = EVAL_ROOT / stage / ts
+    d = _EVAL_ROOT / stage / ts
     d.mkdir(parents=True, exist_ok=True)
     (d / "viz" / "correct").mkdir(parents=True, exist_ok=True)
     (d / "viz" / "wrong").mkdir(parents=True, exist_ok=True)
@@ -388,14 +400,14 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
     import torch.nn.functional as F
     import torchvision.transforms as T
     import torch.nn as nn
-    from torchvision.models import EfficientNet_B0_Weights, efficientnet_b0
+    from torchvision.models import efficientnet_b0
 
     if not STAGE2_MODEL.is_file():
         print(f"Stage 2 model not found: {STAGE2_MODEL}", file=sys.stderr)
         return {}
 
     model = efficientnet_b0(weights=None)
-    model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, _NUM_STAGE2)
     model.load_state_dict(torch.load(str(STAGE2_MODEL), map_location="cpu", weights_only=True))
     model.eval()
 
@@ -416,54 +428,45 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
         if not lbl_path.is_file():
             continue
         true_int = int(lbl_path.read_text().strip())
+        if true_int >= _NUM_STAGE2:
+            continue
         img = cv2.imread(str(img_path))
         tensor = transform(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).unsqueeze(0)
         with torch.no_grad():
             probs = F.softmax(model(tensor), dim=1)[0]
-        screen_prob = float(probs[0])
-        pred_int = 0 if screen_prob >= threshold else 1
+        pred_int = int(probs.argmax().item())
         true_lbl = STAGE2_CLASSES[true_int]
         pred_lbl = STAGE2_CLASSES[pred_int]
-        conf = max(screen_prob, 1 - screen_prob)
+        conf = float(probs[pred_int])
         correct = true_lbl == pred_lbl
-        rows.append({"stem": img_path.stem, "truth": true_lbl, "pred": pred_lbl,
-                     "screen_prob": round(screen_prob, 4), "confidence": round(conf, 4)})
+        rows.append({
+            "stem": img_path.stem,
+            "truth": true_lbl,
+            "pred": pred_lbl,
+            "screen_prob": round(float(probs[0]), 4),
+            "printout_prob": round(float(probs[1]), 4),
+            "live_prob": round(float(probs[2]), 4),
+            "confidence": round(conf, 4),
+        })
         y_true.append(true_lbl)
         y_pred.append(pred_lbl)
         confidences.append(conf)
         correct_flags.append(correct)
 
-        # Save viz
-        tag = f"TRUE:{true_lbl} PRED:{pred_lbl} p={screen_prob:.3f}"
+        tag = f"T:{true_lbl} P:{pred_lbl} s={probs[0]:.2f} pr={probs[1]:.2f}"
         thumb = _bordered(img, correct, tag)
         subfolder = "correct" if correct else "wrong"
         cv2.imwrite(str(run_dir / "viz" / subfolder / f"{img_path.stem}.jpg"), thumb)
 
     metrics = _classification_metrics(y_true, y_pred, STAGE2_CLASSES, "stage2", split, str(STAGE2_MODEL))
-
-    # Threshold sweep
-    def _at(t: float) -> dict:
-        tp = fp = tn = fn = 0
-        for r in rows:
-            p = 0 if r["screen_prob"] >= t else 1
-            true_i = 0 if r["truth"] == "screen" else 1
-            if p == 0 and true_i == 0: tp += 1
-            elif p == 0 and true_i == 1: fp += 1
-            elif p == 1 and true_i == 1: tn += 1
-            else: fn += 1
-        prec = tp / (tp + fp) if (tp + fp) else 0
-        rec = tp / (tp + fn) if (tp + fn) else 0
-        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0
-        return {"t": round(t, 2), "precision": round(prec, 4), "recall": round(rec, 4),
-                "f1": round(f1, 4), "acc": round((tp + tn) / len(rows), 4) if rows else 0}
-
-    metrics["threshold"] = threshold
-    metrics["threshold_sweep"] = [_at(t) for t in [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]]
     metrics["run_dir"] = str(run_dir)
 
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     with open(run_dir / "predictions.csv", "w", newline="", encoding="utf-8") as f:
-        w2 = csv.DictWriter(f, fieldnames=["stem", "truth", "pred", "screen_prob", "confidence"])
+        w2 = csv.DictWriter(
+            f,
+            fieldnames=["stem", "truth", "pred", "screen_prob", "printout_prob", "live_prob", "confidence"],
+        )
         w2.writeheader()
         w2.writerows(rows)
 
@@ -652,7 +655,19 @@ def main() -> int:
                         help="Stage 2 classification threshold (default: 0.5)")
     parser.add_argument("--max-viz", type=int, default=20,
                         help="Max corner visualisation images for Stage 1 (default: 20)")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Where to save eval outputs (default: data/eval/ in repo). "
+             "On Colab use Drive: /content/drive/MyDrive/id-forensics/eval",
+    )
     args = parser.parse_args()
+
+    if args.output_dir:
+        set_eval_root(args.output_dir)
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Eval outputs → {args.output_dir}")
 
     ran_any = False
 
@@ -675,7 +690,7 @@ def main() -> int:
         print("No stage specified.", file=sys.stderr)
         return 1
 
-    print(f"\nAll outputs under: {EVAL_ROOT}")
+    print(f"\nAll outputs under: {_EVAL_ROOT}")
     return 0
 
 
