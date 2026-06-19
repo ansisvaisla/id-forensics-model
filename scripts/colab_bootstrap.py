@@ -412,9 +412,21 @@ def run_batch_label(
     try:
         from google.colab import userdata  # type: ignore[import-untyped]
 
-        # Prefer individual DB parts (if provided) — build a clean DSN that
-        # will overwrite any stale/invalid ZENKA_KE_DATABASE_URL.
-        host = (userdata.get("ZENKA_KE_DB_HOST") or "").strip()\n+        user = (userdata.get("ZENKA_KE_DB_USER") or "").strip()\n+        pwd = (userdata.get("ZENKA_KE_DB_PASSWORD") or "").strip()\n+        name = (userdata.get("ZENKA_KE_DB_NAME") or "").strip()\n+        port = (userdata.get("ZENKA_KE_DB_PORT") or \"\").strip()\n+\n+        if host and user and pwd and name:\n+            # percent-encode user/password\n+            from urllib.parse import quote\n+\n+            user_e = quote(user, safe=\"\")\n+            pwd_e = quote(pwd, safe=\"\")\n+            host_part = host\n+            if port:\n+                host_part = f\"{host}:{port}\"\n+            dsn = f\"postgresql://{user_e}:{pwd_e}@{host_part}/{name}\"\n+            os.environ[\"ZENKA_KE_DATABASE_URL\"] = dsn\n+            print(\"Injected Colab secrets: built ZENKA_KE_DATABASE_URL from individual parts\")\n+        else:\n+            # Fall back to full DSN secret if present\n+            zurl = userdata.get(\"ZENKA_KE_DATABASE_URL\") or \"\"\n+            if zurl:\n+                # percent-encode embedded credentials if present\n+                try:\n+                    from urllib.parse import urlsplit, urlunsplit, quote\n+\n+                    u = urlsplit(zurl)\n+                    if u.username or u.password:\n+                        user_q = quote(u.username or \"\", safe=\"\")\n+                        pwd_q = quote(u.password or \"\", safe=\"\")\n+                        netloc = \"\"\n+                        if user_q or pwd_q:\n+                            netloc = f\"{user_q}:{pwd_q}@\"\n+                        if u.hostname:\n+                            netloc += u.hostname\n+                        if u.port:\n+                            netloc += f\":{u.port}\"\n+                        rebuilt = urlunsplit((u.scheme, netloc, u.path or \"\", u.query or \"\", u.fragment or \"\"))\n+                        os.environ[\"ZENKA_KE_DATABASE_URL\"] = rebuilt\n+                        print(\"Injected Colab secret: ZENKA_KE_DATABASE_URL (credentials percent-encoded)\")\n+                    else:\n+                        os.environ[\"ZENKA_KE_DATABASE_URL\"] = zurl\n+                        print(\"Injected Colab secret: ZENKA_KE_DATABASE_URL\")\n+                except Exception:\n+                    os.environ[\"ZENKA_KE_DATABASE_URL\"] = zurl\n+                    print(\"Injected Colab secret: ZENKA_KE_DATABASE_URL\")\n*** End Patch"}```json  
+        # Build a clean DSN from individual parts (overwrites any stale DSN).
+        host = (userdata.get("ZENKA_KE_DB_HOST") or "").strip()
+        user = (userdata.get("ZENKA_KE_DB_USER") or "").strip()
+        pwd = (userdata.get("ZENKA_KE_DB_PASSWORD") or "").strip()
+        name = (userdata.get("ZENKA_KE_DB_NAME") or "").strip()
+        port = (userdata.get("ZENKA_KE_DB_PORT") or "").strip()
+
+        if host and user and pwd and name:
+            from urllib.parse import quote
+            user_e = quote(user, safe="")
+            pwd_e = quote(pwd, safe="")
+            host_part = f"{host}:{port}" if port else host
+            dsn = f"postgresql://{user_e}:{pwd_e}@{host_part}/{name}"
+            os.environ["ZENKA_KE_DATABASE_URL"] = dsn
+            print("Injected Colab secrets: built ZENKA_KE_DATABASE_URL from individual parts")
         else:
             # Try individual DB parts
             host = userdata.get("ZENKA_KE_DB_HOST") or ""
