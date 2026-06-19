@@ -310,8 +310,11 @@ def evaluate_stage1(split: str = "val", max_viz: int = 20, tolerance_pct: float 
             h1, w1 = thumb_orig.shape[:2]
             h2, w2 = thumb_crop.shape[:2]
             max_h = max(h1, h2)
-            pad1 = np.full((max_h - h1, w1, 3), 20, np.uint8)
-            pad2 = np.full((max_h - h2, w2, 3), 20, np.uint8)
+            pad1 = np.full((max_h - h1, w1, 3), 60, np.uint8)
+            pad2 = np.full((max_h - h2, w2, 3), 60, np.uint8)
+            # Draw dotted line at crop boundary so padding is obvious
+            if max_h - h2 > 0:
+                cv2.line(pad2, (0, 0), (w2, 0), (0, 180, 255), 2)
             col1 = np.vstack([thumb_orig, pad1])
             col2 = np.vstack([thumb_crop, pad2])
             divider = np.full((max_h, 4, 3), 80, np.uint8)
