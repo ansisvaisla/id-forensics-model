@@ -28,20 +28,70 @@ from id_crop.quality import crop_is_plausible, quad_is_sane
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "stage1_corners" / "weights" / "best.pt"
 
-_ID1_ASPECT = 85.6 / 54.0  # ISO/IEC 7810 ID-1 landscape aspect ratio (~1.585)
+_ID1_ASPECT = 85.6 / 54.0
 
-# ML fallback confidence gates
+# ML confidence gates
 _MIN_KPT_CONF = 0.25
 _MIN_KPT_MEAN = 0.40
 _MIN_BOX_CONF = 0.45
 
-# Skip warp if card already fills most of frame
+# Skip warp if card fills >85% of frame
 _COVERAGE_SKIP = 0.85
 
-# Mark as off-screen if corner is within this fraction of image edge
+# Corner off-screen threshold
 _EDGE_MARGIN = 0.03
 
+# Selfie detection: face must cover this fraction of image area to be a selfie
+# AND ML card detection must be absent/weak.
+_SELFIE_FACE_AREA_MIN = 0.10   # face bbox > 10% of image → plausible selfie
+_SELFIE_CARD_CONF_MAX = 0.30   # card detector confidence must be below this
+
 _ml_model = None
+_face_cascade = None
+
+
+# ── Selfie detector ───────────────────────────────────────────────────────────
+
+def _get_face_cascade():
+    """Load OpenCV Haar cascade (ships with cv2, no download needed)."""
+    global _face_cascade
+    if _face_cascade is None:
+        import cv2
+        _face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+    return _face_cascade
+
+
+def _is_selfie(image: np.ndarray, card_conf: float) -> bool:
+    """Return True if image looks like a selfie (large face, no confident card).
+
+    Uses Haar cascade — fast, zero extra deps, ships with OpenCV.
+    Only triggers when card detector is also uncertain (conf < _SELFIE_CARD_CONF_MAX)
+    so a photo OF an ID with a face printed on it does not trigger.
+    """
+    if card_conf >= _SELFIE_CARD_CONF_MAX:
+        return False
+
+    import cv2
+    h, w = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.equalizeHist(gray)
+
+    cascade = _get_face_cascade()
+    # scaleFactor 1.1, minNeighbors 4 — balanced precision/recall
+    faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60))
+
+    if len(faces) == 0:
+        return False
+
+    img_area = h * w
+    for (fx, fy, fw, fh) in faces:
+        face_area_ratio = (fw * fh) / img_area
+        if face_area_ratio >= _SELFIE_FACE_AREA_MIN:
+            return True
+
+    return False
 
 
 # ── ML fallback ───────────────────────────────────────────────────────────────
@@ -235,6 +285,16 @@ def run(image: np.ndarray) -> IdCropResult:
         )
 
     ml_corners, conf, kpt_conf = _ml_detect(image)
+
+    # Selfie check — runs on low-confidence card detections only
+    if _is_selfie(image, card_conf=conf if ml_corners is not None else 0.0):
+        return IdCropResult(
+            cropped_image=image,
+            is_partial_document=False,
+            corners_detected=0,
+            label="selfie_instead_of_document",
+            confidence=0.0,
+        )
 
     if ml_corners is None:
         return IdCropResult(

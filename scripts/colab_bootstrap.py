@@ -49,7 +49,7 @@ def check_gpu() -> None:
 
 def mount_drive() -> None:
     """Mount Google Drive at /content/drive."""
-    from google.colab import drive
+    from google.colab import drive  # type: ignore[import-untyped]
 
     drive.mount("/content/drive")
     DRIVE_ROOT.mkdir(parents=True, exist_ok=True)
