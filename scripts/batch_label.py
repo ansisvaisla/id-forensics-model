@@ -2,39 +2,40 @@
 
 Workflow
 ────────
-1. Query DB for recent unlabeled ID-front images (postgres2).
+Option A — DB mode (default, requires network access to postgres):
+1. Query DB for recent unlabeled ID-front images.
+
+Option B — CSV mode (no DB needed):
+1. Export candidates from DBeaver using the query in db_zenka_ke.py, save as
+   data/batches/candidates.csv, then run with --from-csv.
+
+Both modes then:
 2. Filter out images already in label_studio_export.json.
 3. For each candidate:
-   a. Generate a presigned S3 URL (LS fetches the image — nothing downloaded permanently).
+   a. Generate a presigned S3 URL (Label Studio fetches the image in browser).
    b. Run the pipeline (download temporarily, run stages 1/2/4, discard bytes).
    c. Map pipeline output → Label Studio predictions (pre-filled choices).
 4. Write  data/batches/<YYYYMMDD_HHMMSS>_batch.json
-5. In Label Studio: open project → Import → select the JSON file.
-6. Skim the pre-annotated tasks, fix wrong predictions.
-7. Export JSON → overwrite  data/labels/label_studio_export.json
-8. Run  .\\scripts\\sync_to_cloud.ps1  → retrain on Colab.
+5. Label Studio → Import → select that file → skim → export → retrain.
 
 Usage
 ─────
-    python scripts/batch_label.py
+    # DB mode (requires network to postgres):
     python scripts/batch_label.py --limit 1000 --hours 720
-    python scripts/batch_label.py --limit 200  --skip-inference   # no pipeline, faster
-    python scripts/batch_label.py --out data/batches/my_batch.json
 
-Notes
-─────
-- Presigned URLs expire after --url-expiry seconds (default 604800 = 7 days).
-  Generate a fresh batch if you haven't imported within that window.
-- Pipeline models must be present under models/ on this machine.
-  If a model is missing the task is still written; only predictions are omitted.
-- DB credentials come from .env (ZENKA_KE_DB_*).
-- AWS credentials come from .env (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY).
+    # CSV mode (no DB needed — export candidates.csv from DBeaver first):
+    python scripts/batch_label.py --from-csv data/batches/candidates.csv --limit 1000
+
+    # Skip pipeline inference (faster, no predictions):
+    python scripts/batch_label.py --from-csv data/batches/candidates.csv --skip-inference
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import io
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -163,6 +164,31 @@ def _fetch_candidates(
     )
     unseen = [r for r in rows if _stem_from_s3_key(r.s3_key) not in labeled_stems]
     return unseen[:limit]
+
+
+def _fetch_candidates_from_csv(
+    csv_path: Path,
+    limit: int,
+    labeled_stems: set[str],
+) -> list[dict]:
+    """Read candidates from a DBeaver-exported CSV (attachment_id, s3_key, bucket)."""
+    rows: list[dict] = []
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            s3_key = row.get("s3_key", "").strip()
+            if not s3_key:
+                continue
+            if _stem_from_s3_key(s3_key) in labeled_stems:
+                continue
+            rows.append({
+                "s3_key": s3_key,
+                "bucket": row.get("bucket", "sf-zenka-ke-prod-media-svc").strip(),
+                "attachment_id": row.get("attachment_id", "").strip(),
+            })
+            if len(rows) >= limit:
+                break
+    return rows
 
 
 # ── Presigned URL ─────────────────────────────────────────────────────────────
@@ -303,6 +329,15 @@ def main() -> int:
         description="Generate Label Studio import JSON with pipeline pre-annotations"
     )
     parser.add_argument(
+        "--from-csv",
+        type=Path,
+        default=None,
+        metavar="CSV",
+        help="Read candidates from a CSV file instead of querying the DB. "
+             "CSV must have columns: s3_key, bucket (attachment_id optional). "
+             "Export from DBeaver using the query in db_zenka_ke.py.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=1000,
@@ -351,15 +386,23 @@ def main() -> int:
     print(f"Already labeled: {len(labeled_stems)} images")
 
     # ── Step 2: fetch candidates ─────────────────────────────────────────────
-    print(f"Querying DB for recent ID_DOC_FRONT images (last {args.hours}h)...")
-    try:
-        candidates = _fetch_candidates(args.hours, args.limit, labeled_stems)
-    except SystemExit as exc:
-        print(f"DB connection failed: {exc}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"DB query failed: {exc}", file=sys.stderr)
-        return 1
+    if args.from_csv:
+        print(f"Reading candidates from CSV: {args.from_csv}")
+        try:
+            candidates = _fetch_candidates_from_csv(args.from_csv, args.limit, labeled_stems)
+        except Exception as exc:
+            print(f"CSV read failed: {exc}", file=sys.stderr)
+            return 1
+    else:
+        print(f"Querying DB for recent ID_DOC_FRONT images (last {args.hours}h)...")
+        try:
+            candidates = _fetch_candidates(args.hours, args.limit, labeled_stems)
+        except SystemExit as exc:
+            print(f"DB connection failed: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"DB query failed: {exc}", file=sys.stderr)
+            return 1
 
     if not candidates:
         print("No new unlabeled candidates found. Nothing to do.")
@@ -383,9 +426,12 @@ def main() -> int:
     failed = 0
     for row in iterator:
         try:
+            # row is either a ZenkaAttachmentRow dataclass or a plain dict
+            s3_key = row.s3_key if hasattr(row, "s3_key") else row["s3_key"]
+            bucket = row.bucket if hasattr(row, "bucket") else row["bucket"]
             task = _build_task(
-                s3_key=row.s3_key,
-                bucket=row.bucket,
+                s3_key=s3_key,
+                bucket=bucket,
                 url_expiry=args.url_expiry,
                 run_inference=not args.skip_inference,
             )
