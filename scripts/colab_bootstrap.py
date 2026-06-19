@@ -225,7 +225,11 @@ def sync_images_from_s3(workers: int = 16) -> int:
         aws_session_token=token or None,
         region_name=region,
     )
-    s3 = session.client("s3")
+    from botocore.config import Config  # type: ignore[import-untyped]
+    s3 = session.client(
+        "s3",
+        config=Config(max_pool_connections=max(workers, 10)),
+    )
 
     keys = _labeled_s3_keys()
     print(f"Labeled images in export: {len(keys)}")
