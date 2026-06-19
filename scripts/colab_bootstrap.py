@@ -251,6 +251,37 @@ def clear_corner_caches() -> None:
         print("deleted", cache)
 
 
+def download_from_colab_manifest(
+    manifest_path: Path | str,
+    rebuild_splits: bool = True,
+) -> None:
+    """Download training images via pre-signed HTTPS URLs — no AWS credentials in Colab.
+
+    Work PC generates the manifest with:
+        python scripts/prepare_training_data.py --write-colab-manifest
+
+    Upload the small JSON file to Colab (Files panel) or Drive, then call this.
+    """
+    manifest = Path(manifest_path)
+    if not manifest.is_file():
+        raise FileNotFoundError(
+            f"Manifest not found: {manifest}\n"
+            "On work PC run:\n"
+            "  python scripts/prepare_training_data.py --write-colab-manifest\n"
+            "Then upload data/manifests/colab_presigned.json to Colab."
+        )
+    os.chdir(REPO_DIR)
+    cmd = [
+        sys.executable,
+        "scripts/prepare_training_data.py",
+        "--from-colab-manifest",
+        str(manifest),
+    ]
+    if not rebuild_splits:
+        cmd.append("--skip-pipeline")
+    subprocess.run(cmd, check=True, cwd=REPO_DIR)
+
+
 def setup_workspace(github_token: str = "", remount_drive: bool = True) -> Path:
     """Full Colab setup: mount Drive, clone, extract, install. Idempotent."""
     if remount_drive:
