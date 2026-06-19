@@ -414,8 +414,32 @@ def run_batch_label(
 
         zurl = userdata.get("ZENKA_KE_DATABASE_URL") or ""
         if zurl:
-            os.environ.setdefault("ZENKA_KE_DATABASE_URL", zurl)
-            print("Injected Colab secret: ZENKA_KE_DATABASE_URL")
+            # Some DB passwords contain characters that must be percent-encoded
+            # in a URI (e.g. @, :, /, &). Detect and re-encode username/password
+            # if present so psycopg2 can parse the DSN.
+            try:
+                from urllib.parse import urlsplit, urlunsplit, quote
+
+                u = urlsplit(zurl)
+                if u.username or u.password:
+                    user = quote(u.username or "", safe="") if u.username else ""
+                    pwd = quote(u.password or "", safe="") if u.password else ""
+                    netloc = ""
+                    if user or pwd:
+                        netloc = f"{user}:{pwd}@"
+                    if u.hostname:
+                        netloc += u.hostname
+                    if u.port:
+                        netloc += f":{u.port}"
+                    rebuilt = urlunsplit((u.scheme, netloc, u.path or "", u.query or "", u.fragment or ""))
+                    os.environ.setdefault("ZENKA_KE_DATABASE_URL", rebuilt)
+                    print("Injected Colab secret: ZENKA_KE_DATABASE_URL (credentials percent-encoded)")
+                else:
+                    os.environ.setdefault("ZENKA_KE_DATABASE_URL", zurl)
+                    print("Injected Colab secret: ZENKA_KE_DATABASE_URL")
+            except Exception:
+                os.environ.setdefault("ZENKA_KE_DATABASE_URL", zurl)
+                print("Injected Colab secret: ZENKA_KE_DATABASE_URL")
         else:
             # Try individual DB parts
             host = userdata.get("ZENKA_KE_DB_HOST") or ""
