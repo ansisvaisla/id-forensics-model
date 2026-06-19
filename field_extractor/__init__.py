@@ -17,6 +17,7 @@ Shadow mode: exceptions caught by orchestration layer.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Optional
 
@@ -191,6 +192,12 @@ def run(image_bytes: bytes, id_type: str = "unknown") -> FieldExtractResult:
     Returns:
         FieldExtractResult with extracted_fields and confidence score.
     """
+    if os.getenv("SKIP_FIELD_EXTRACTOR"):
+        return FieldExtractResult(
+            extracted_fields=ExtractedFields(),
+            field_extraction_confidence=0.0,
+            label="skipped",
+        )
     blocks = _call_textract(image_bytes)
     if not blocks:
         return FieldExtractResult(
