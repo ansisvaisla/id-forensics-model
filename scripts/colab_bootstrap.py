@@ -412,34 +412,9 @@ def run_batch_label(
     try:
         from google.colab import userdata  # type: ignore[import-untyped]
 
-        zurl = userdata.get("ZENKA_KE_DATABASE_URL") or ""
-        if zurl:
-            # Some DB passwords contain characters that must be percent-encoded
-            # in a URI (e.g. @, :, /, &). Detect and re-encode username/password
-            # if present so psycopg2 can parse the DSN.
-            try:
-                from urllib.parse import urlsplit, urlunsplit, quote
-
-                u = urlsplit(zurl)
-                if u.username or u.password:
-                    user = quote(u.username or "", safe="") if u.username else ""
-                    pwd = quote(u.password or "", safe="") if u.password else ""
-                    netloc = ""
-                    if user or pwd:
-                        netloc = f"{user}:{pwd}@"
-                    if u.hostname:
-                        netloc += u.hostname
-                    if u.port:
-                        netloc += f":{u.port}"
-                    rebuilt = urlunsplit((u.scheme, netloc, u.path or "", u.query or "", u.fragment or ""))
-                    os.environ.setdefault("ZENKA_KE_DATABASE_URL", rebuilt)
-                    print("Injected Colab secret: ZENKA_KE_DATABASE_URL (credentials percent-encoded)")
-                else:
-                    os.environ.setdefault("ZENKA_KE_DATABASE_URL", zurl)
-                    print("Injected Colab secret: ZENKA_KE_DATABASE_URL")
-            except Exception:
-                os.environ.setdefault("ZENKA_KE_DATABASE_URL", zurl)
-                print("Injected Colab secret: ZENKA_KE_DATABASE_URL")
+        # Prefer individual DB parts (if provided) — build a clean DSN that
+        # will overwrite any stale/invalid ZENKA_KE_DATABASE_URL.
+        host = (userdata.get("ZENKA_KE_DB_HOST") or "").strip()\n+        user = (userdata.get("ZENKA_KE_DB_USER") or "").strip()\n+        pwd = (userdata.get("ZENKA_KE_DB_PASSWORD") or "").strip()\n+        name = (userdata.get("ZENKA_KE_DB_NAME") or "").strip()\n+        port = (userdata.get("ZENKA_KE_DB_PORT") or \"\").strip()\n+\n+        if host and user and pwd and name:\n+            # percent-encode user/password\n+            from urllib.parse import quote\n+\n+            user_e = quote(user, safe=\"\")\n+            pwd_e = quote(pwd, safe=\"\")\n+            host_part = host\n+            if port:\n+                host_part = f\"{host}:{port}\"\n+            dsn = f\"postgresql://{user_e}:{pwd_e}@{host_part}/{name}\"\n+            os.environ[\"ZENKA_KE_DATABASE_URL\"] = dsn\n+            print(\"Injected Colab secrets: built ZENKA_KE_DATABASE_URL from individual parts\")\n+        else:\n+            # Fall back to full DSN secret if present\n+            zurl = userdata.get(\"ZENKA_KE_DATABASE_URL\") or \"\"\n+            if zurl:\n+                # percent-encode embedded credentials if present\n+                try:\n+                    from urllib.parse import urlsplit, urlunsplit, quote\n+\n+                    u = urlsplit(zurl)\n+                    if u.username or u.password:\n+                        user_q = quote(u.username or \"\", safe=\"\")\n+                        pwd_q = quote(u.password or \"\", safe=\"\")\n+                        netloc = \"\"\n+                        if user_q or pwd_q:\n+                            netloc = f\"{user_q}:{pwd_q}@\"\n+                        if u.hostname:\n+                            netloc += u.hostname\n+                        if u.port:\n+                            netloc += f\":{u.port}\"\n+                        rebuilt = urlunsplit((u.scheme, netloc, u.path or \"\", u.query or \"\", u.fragment or \"\"))\n+                        os.environ[\"ZENKA_KE_DATABASE_URL\"] = rebuilt\n+                        print(\"Injected Colab secret: ZENKA_KE_DATABASE_URL (credentials percent-encoded)\")\n+                    else:\n+                        os.environ[\"ZENKA_KE_DATABASE_URL\"] = zurl\n+                        print(\"Injected Colab secret: ZENKA_KE_DATABASE_URL\")\n+                except Exception:\n+                    os.environ[\"ZENKA_KE_DATABASE_URL\"] = zurl\n+                    print(\"Injected Colab secret: ZENKA_KE_DATABASE_URL\")\n*** End Patch"}```json  
         else:
             # Try individual DB parts
             host = userdata.get("ZENKA_KE_DB_HOST") or ""
