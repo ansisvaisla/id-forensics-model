@@ -46,11 +46,71 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPORT_FILE = PROJECT_ROOT / "data" / "labels" / "label_studio_export.json"
 BATCHES_DIR = PROJECT_ROOT / "data" / "batches"
 
+# Google Drive path (used automatically when running in Colab)
+_DRIVE_BATCHES_DIR = Path("/content/drive/MyDrive/id-forensics/data/batches")
+
 # Pipeline version tag written into predictions.model_version
 _MODEL_VERSION = "id-forensics-pipeline"
 
+def _inject_colab_db_secrets() -> bool:
+    """Read DB credentials from Colab Secrets and inject into os.environ.
 
-# ── Already-labeled helpers ───────────────────────────────────────────────────
+    Supports two modes:
+      • Single secret:    ZENKA_KE_DATABASE_URL  (full postgresql:// URL)
+      • Individual parts: ZENKA_KE_DB_HOST, ZENKA_KE_DB_USER,
+                          ZENKA_KE_DB_PASSWORD, ZENKA_KE_DB_NAME, ZENKA_KE_DB_PORT
+
+    Returns True if running in Colab (even if no secrets found).
+    """
+    try:
+        from google.colab import userdata  # type: ignore[import-untyped]
+    except ImportError:
+        return False  # not in Colab
+
+    def _get(name: str) -> str:
+        try:
+            return userdata.get(name) or ""
+        except Exception:
+            return ""
+
+    url = _get("ZENKA_KE_DATABASE_URL")
+    if url:
+        os.environ.setdefault("ZENKA_KE_DATABASE_URL", url)
+        print("DB credentials loaded from Colab Secret: ZENKA_KE_DATABASE_URL")
+        return True
+
+    host = _get("ZENKA_KE_DB_HOST")
+    user = _get("ZENKA_KE_DB_USER")
+    password = _get("ZENKA_KE_DB_PASSWORD")
+    name = _get("ZENKA_KE_DB_NAME")
+    port = _get("ZENKA_KE_DB_PORT") or "5432"
+
+    if host and user and password and name:
+        os.environ.setdefault("ZENKA_KE_DB_HOST", host)
+        os.environ.setdefault("ZENKA_KE_DB_USER", user)
+        os.environ.setdefault("ZENKA_KE_DB_PASSWORD", password)
+        os.environ.setdefault("ZENKA_KE_DB_NAME", name)
+        os.environ.setdefault("ZENKA_KE_DB_PORT", port)
+        print("DB credentials loaded from Colab Secrets (individual vars)")
+        return True
+
+    print(
+        "WARNING: No DB secrets found in Colab.\n"
+        "  Add one of these in the 🔑 Secrets sidebar:\n"
+        "    • ZENKA_KE_DATABASE_URL  (recommended — full postgresql:// URL)\n"
+        "    • OR: ZENKA_KE_DB_HOST, ZENKA_KE_DB_USER, ZENKA_KE_DB_PASSWORD, ZENKA_KE_DB_NAME"
+    )
+    return True
+
+
+def _default_batches_dir() -> Path:
+    """Return Drive batches dir in Colab, local data/batches otherwise."""
+    if _DRIVE_BATCHES_DIR.parent.parent.is_dir():  # Drive is mounted
+        return _DRIVE_BATCHES_DIR
+    return BATCHES_DIR
+
+
+
 
 def _flat_name(file_upload: str) -> str:
     """Strip Label Studio UUID prefix: 'abc123-2023_05_18_xyz.jpg' → '2023_05_18_xyz.jpg'."""
@@ -235,6 +295,8 @@ def _build_task(
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
+    # Inject DB creds from Colab Secrets first, then fall back to .env
+    _inject_colab_db_secrets()
     load_dotenv(PROJECT_ROOT / ".env")
 
     parser = argparse.ArgumentParser(
@@ -256,7 +318,10 @@ def main() -> int:
         "--out",
         type=Path,
         default=None,
-        help="Output JSON path (default: data/batches/YYYYMMDD_HHMMSS_batch.json)",
+        help=(
+            "Output JSON path. "
+            "Default: Drive data/batches/ in Colab, or local data/batches/ otherwise."
+        ),
     )
     parser.add_argument(
         "--skip-inference",
@@ -278,7 +343,7 @@ def main() -> int:
     args = parser.parse_args()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = args.out or (BATCHES_DIR / f"{ts}_batch.json")
+    out_path = args.out or (_default_batches_dir() / f"{ts}_batch.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ── Step 1: load already-labeled stems ───────────────────────────────────

@@ -25,7 +25,12 @@ Colab Secrets required (🔑 left sidebar):
     AWS_ACCESS_KEY_ID
     AWS_SECRET_ACCESS_KEY
     AWS_DEFAULT_REGION
-    AWS_SESSION_TOKEN   (only for temporary/SSO credentials — omit if using long-term keys)
+    AWS_SESSION_TOKEN          (only for temporary/SSO credentials — omit if using long-term keys)
+
+    For batch labeling (section 7):
+    ZENKA_KE_DATABASE_URL      (recommended — full postgresql:// URL)
+    OR individually:
+      ZENKA_KE_DB_HOST, ZENKA_KE_DB_USER, ZENKA_KE_DB_PASSWORD, ZENKA_KE_DB_NAME
 """
 from __future__ import annotations
 
@@ -40,6 +45,7 @@ DRIVE_ROOT = Path(f"/content/drive/MyDrive/{DRIVE_FOLDER}")
 DRIVE_RAW_DIR = DRIVE_ROOT / "data" / "raw" / "id_doc_front_flat"
 OUTPUTS_DIR = DRIVE_ROOT / "outputs"
 EVAL_DIR = DRIVE_ROOT / "eval"
+DRIVE_BATCHES_DIR = DRIVE_ROOT / "data" / "batches"
 REPO_DIR = Path("/content/id-forensics-model")
 GITHUB_USER = "ansisvaisla"
 REPO_NAME = "id-forensics-model"
@@ -372,4 +378,51 @@ def run_eval(stage: str, split: str = "val") -> Path:
     print(f"Eval saved to Drive: {latest}")
     print(f"  wrong images: {latest / 'viz' / 'wrong'}")
     print(f"  report:       {latest / 'report.txt'}")
+    return latest
+
+
+# ── Batch labeling ─────────────────────────────────────────────────────────────
+
+def run_batch_label(
+    limit: int = 1000,
+    hours: int = 720,
+    skip_inference: bool = False,
+    url_expiry: int = 604_800,
+) -> Path:
+    """Generate a Label Studio import JSON pre-annotated by the pipeline.
+
+    DB credentials are read automatically from Colab Secrets:
+      • ZENKA_KE_DATABASE_URL  (recommended — full postgresql:// URL)
+      • OR individual: ZENKA_KE_DB_HOST, ZENKA_KE_DB_USER, ZENKA_KE_DB_PASSWORD,
+                       ZENKA_KE_DB_NAME, ZENKA_KE_DB_PORT
+
+    AWS credentials (for presigned URLs + image download) come from the same
+    Colab Secrets used for S3 sync: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+    AWS_DEFAULT_REGION, AWS_SESSION_TOKEN (optional).
+
+    Output is saved to Drive: My Drive/id-forensics/data/batches/<timestamp>_batch.json
+    Returns the Path to the written file.
+    """
+    DRIVE_BATCHES_DIR.mkdir(parents=True, exist_ok=True)
+    os.chdir(REPO_DIR)
+
+    cmd = [
+        sys.executable,
+        "scripts/batch_label.py",
+        "--limit", str(limit),
+        "--hours", str(hours),
+        "--url-expiry", str(url_expiry),
+    ]
+    if skip_inference:
+        cmd.append("--skip-inference")
+
+    subprocess.run(cmd, check=True, cwd=REPO_DIR)
+
+    # Find the most-recent batch JSON written to Drive
+    batch_files = sorted(DRIVE_BATCHES_DIR.glob("*_batch.json"), reverse=True)
+    if not batch_files:
+        raise FileNotFoundError(f"No batch JSON found under {DRIVE_BATCHES_DIR}")
+    latest = batch_files[0]
+    print(f"\nBatch saved to Drive: {latest}")
+    print("Import into Label Studio: open project → Import → select that file.")
     return latest
