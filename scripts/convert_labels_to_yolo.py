@@ -64,7 +64,7 @@ RAW_ROOTS_RECURSIVE = [
     PROJECT_ROOT / "data" / "raw" / "id_doc_front",
 ]
 
-SCREEN_NEGATIVE_QUALITY = {"good_front", "partial", "blurry", "back"}
+SCREEN_NEGATIVE_QUALITY = {"good_front", "partial", "blurry", "back", "selfie"}
 SCREEN_POSITIVE_QUALITY = {"screen"}
 PRINTOUT_QUALITY = {"printout"}
 
