@@ -406,6 +406,35 @@ def run_batch_label(
     DRIVE_BATCHES_DIR.mkdir(parents=True, exist_ok=True)
     os.chdir(REPO_DIR)
 
+    # Ensure DB secrets from Colab Secrets are injected into the environment
+    # so the subprocess can read them (google.colab.userdata is only available
+    # in the notebook process).
+    try:
+        from google.colab import userdata  # type: ignore[import-untyped]
+
+        zurl = userdata.get("ZENKA_KE_DATABASE_URL") or ""
+        if zurl:
+            os.environ.setdefault("ZENKA_KE_DATABASE_URL", zurl)
+            print("Injected Colab secret: ZENKA_KE_DATABASE_URL")
+        else:
+            # Try individual DB parts
+            host = userdata.get("ZENKA_KE_DB_HOST") or ""
+            user = userdata.get("ZENKA_KE_DB_USER") or ""
+            pwd = userdata.get("ZENKA_KE_DB_PASSWORD") or ""
+            name = userdata.get("ZENKA_KE_DB_NAME") or ""
+            port = userdata.get("ZENKA_KE_DB_PORT") or ""
+            if host and user and pwd and name:
+                os.environ.setdefault("ZENKA_KE_DB_HOST", host)
+                os.environ.setdefault("ZENKA_KE_DB_USER", user)
+                os.environ.setdefault("ZENKA_KE_DB_PASSWORD", pwd)
+                os.environ.setdefault("ZENKA_KE_DB_NAME", name)
+                if port:
+                    os.environ.setdefault("ZENKA_KE_DB_PORT", port)
+                print("Injected Colab secrets: ZENKA_KE_DB_*")
+    except Exception:
+        # Not running in Colab or userdata unavailable — fall back to .env
+        pass
+
     cmd = [
         sys.executable,
         "scripts/batch_label.py",
