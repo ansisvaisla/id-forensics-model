@@ -15,13 +15,11 @@ Colab VM (per-session, fast NVMe):
     /content/id-forensics-model/      ← git clone
     /content/id-forensics-model/data/raw  ← symlink → Drive raw images
 
-Flow (one-time or when new images arrive):
-    1. cb.setup(github_token=...)      # mount Drive, clone/pull repo, install deps
-    2. cb.sync_images_from_s3()        # Drive←S3 (skips existing), then convert+split on VM
-
-Every subsequent session (no new images):
-    1. cb.setup(github_token=...)      # same call, but sync_images=False skips S3
-    2. cb.rebuild_splits()             # convert+split only (images already on Drive)
+Flow:
+    1. cb.connect()              # Drive + GitHub + deps
+    2. cb.sync_images_from_s3()  # optional — new images only
+    3. cb.rebuild_splits()       # convert labels → YOLO train/val/test
+    4. train / save_weights / run_eval
 
 Colab Secrets required (🔑 left sidebar):
     AWS_ACCESS_KEY_ID
@@ -298,38 +296,35 @@ def clear_corner_caches() -> None:
         print("deleted", cache)
 
 
-# ── Main setup entry point ────────────────────────────────────────────────────
+# ── Connect (infra only — no data processing) ────────────────────────────────
+
+def connect(github_token: str = "") -> Path:
+    """Mount Drive, clone/pull GitHub, install deps, symlink images.
+
+    Does NOT download from S3 or convert labels — run those separately.
+    """
+    mount_drive()
+    clone_or_pull(github_token=github_token)
+    install_deps()
+    _symlink_raw_to_drive()
+    return REPO_DIR
+
+
+# ── Legacy convenience wrapper ─────────────────────────────────────────────────
 
 def setup(
     github_token: str = "",
     sync_images: bool = True,
     workers: int = 16,
 ) -> Path:
-    """Full session setup.
-
-    Args:
-        github_token: GitHub PAT for private repo. Leave "" if public.
-        sync_images:  True  = download any new images from S3 → Drive,
-                               then rebuild YOLO splits (use this when you added new labels).
-                      False = skip S3 sync (use this when re-training with the same images).
-        workers:      Parallel S3 download threads.
-
-    Returns repo path (/content/id-forensics-model).
-    """
-    mount_drive()
-    clone_or_pull(github_token=github_token)
-    install_deps()
-    _symlink_raw_to_drive()
-
+    """Full pipeline: connect → optional S3 sync → rebuild splits."""
+    connect(github_token=github_token)
     if sync_images:
         sync_images_from_s3(workers=workers)
-        rebuild_splits()
     else:
-        # Images already on Drive — just rebuild splits from existing files
         n = len(list(DRIVE_RAW_DIR.glob("*.jpg")))
         print(f"Skipping S3 sync — {n} images already on Drive.")
-        rebuild_splits()
-
+    rebuild_splits()
     return REPO_DIR
 
 
