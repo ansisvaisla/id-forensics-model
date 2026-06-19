@@ -135,10 +135,16 @@ def _fetch_candidates_csv(csv_path: Path, limit: int, labeled_stems: set[str]) -
 def _s3_client():
     import boto3
     from botocore.config import Config
-    return boto3.client("s3", config=Config(
-        signature_version="s3v4",
-        max_pool_connections=64,
-    ))
+    region = os.environ.get("AWS_DEFAULT_REGION", "eu-west-1")
+    return boto3.client(
+        "s3",
+        region_name=region,
+        endpoint_url=f"https://s3.{region}.amazonaws.com",
+        config=Config(
+            signature_version="s3v4",
+            max_pool_connections=64,
+        ),
+    )
 
 
 def _download_all(candidates: list, workers: int = 32) -> dict[int, Optional[bytes]]:
