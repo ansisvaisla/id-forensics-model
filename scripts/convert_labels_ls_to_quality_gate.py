@@ -161,6 +161,10 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--default-bucket", default="sf-zenka-ke-prod-media-svc",
                         help="S3 bucket to use when image URI is not s3://")
+    parser.add_argument("--image-cache", type=Path, default=None,
+                        help="Persistent image cache directory (e.g. on Google Drive). "
+                             "Images are downloaded here on first run and reused on "
+                             "subsequent runs instead of re-downloading from S3.")
     args = parser.parse_args()
 
     if not args.input.is_file():
@@ -220,6 +224,10 @@ def main() -> int:
     print(f"\nSplit → train: {len(train_samples)}  val: {len(val_samples)}")
 
     # ── Create output directories ─────────────────────────────────────────────
+    if args.image_cache:
+        args.image_cache.mkdir(parents=True, exist_ok=True)
+        print(f"Image cache: {args.image_cache}")
+
     for child in ("images", "labels"):
         path = args.out / child
         if path.exists():
@@ -237,6 +245,7 @@ def main() -> int:
 
     client = _s3_client()
     failed = 0
+    cached_hits = 0
 
     for split, split_samples in (("train", train_samples), ("val", val_samples)):
         img_dir = args.out / "images" / split
@@ -244,14 +253,34 @@ def main() -> int:
         iterable = _tqdm(split_samples, desc=split) if _tqdm else split_samples
         for bucket, s3_key, stem, class_idx in iterable:
             dest_img = img_dir / f"{stem}.jpg"
-            ok = _download_image(client, bucket, s3_key, dest_img)
-            if not ok:
-                failed += 1
-                continue
+
+            # Check Drive cache first — copy to VM instead of re-downloading
+            if args.image_cache:
+                cached = args.image_cache / f"{stem}.jpg"
+                if cached.is_file():
+                    shutil.copy2(cached, dest_img)
+                    cached_hits += 1
+                    (lbl_dir / f"{stem}.txt").write_text(str(class_idx), encoding="utf-8")
+                    continue
+                # Not in cache yet — download from S3 and save to cache
+                ok = _download_image(client, bucket, s3_key, cached)
+                if ok:
+                    shutil.copy2(cached, dest_img)
+                else:
+                    failed += 1
+                    continue
+            else:
+                ok = _download_image(client, bucket, s3_key, dest_img)
+                if not ok:
+                    failed += 1
+                    continue
+
             (lbl_dir / f"{stem}.txt").write_text(str(class_idx), encoding="utf-8")
 
     total = len(train_samples) + len(val_samples)
     print(f"\nDone: {total - failed}/{total} images written to {args.out}")
+    if args.image_cache:
+        print(f"  From Drive cache: {cached_hits}  |  Downloaded from S3: {total - failed - cached_hits}")
     print(f"  Failed downloads: {failed}")
     if failed:
         print("  Re-run to retry failed downloads (already-downloaded images are skipped).")

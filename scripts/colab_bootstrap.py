@@ -4,7 +4,8 @@ Architecture
 ────────────
 Google Drive (persistent across sessions):
     My Drive/id-forensics/
-        data/raw/id_doc_front_flat/   ← labeled images, synced from S3 once
+        data/raw/id_doc_front_flat/   ← stage1/4 labeled images, synced from S3 once
+        data/screen_images/           ← stage2 quality gate images, cached from S3 once
         outputs/                       ← trained weights
         eval/                            ← evaluation reports + viz images
 
@@ -43,6 +44,7 @@ from pathlib import Path
 DRIVE_FOLDER = "id-forensics"
 DRIVE_ROOT = Path(f"/content/drive/MyDrive/{DRIVE_FOLDER}")
 DRIVE_RAW_DIR = DRIVE_ROOT / "data" / "raw" / "id_doc_front_flat"
+DRIVE_SCREEN_DIR = DRIVE_ROOT / "data" / "screen_images"  # stage2 image cache
 OUTPUTS_DIR = DRIVE_ROOT / "outputs"
 EVAL_DIR = DRIVE_ROOT / "eval"
 DRIVE_BATCHES_DIR = DRIVE_ROOT / "data" / "batches"
@@ -78,6 +80,7 @@ def mount_drive() -> None:
     drive.mount("/content/drive")
     DRIVE_ROOT.mkdir(parents=True, exist_ok=True)
     DRIVE_RAW_DIR.mkdir(parents=True, exist_ok=True)
+    DRIVE_SCREEN_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Drive mounted: {DRIVE_ROOT}")
