@@ -262,12 +262,20 @@ def _to_ls_predictions(result) -> list[dict]:
     else:
         confidence = 0.5
 
+    # id_type is only meaningful when the image actually contains a document.
+    # For selfie/screen/printout/garbage/back the field is intentionally left
+    # blank so annotators don't have to clear a spurious pre-annotation.
+    _ID_TYPE_QUALITIES = {"good_front", "partial", "blurry"}
+
     annotation_results: list[dict] = [
         {"from_name": "quality", "to_name": "image", "type": "choices",
          "value": {"choices": [quality]}},
-        {"from_name": "id_type", "to_name": "image", "type": "choices",
-         "value": {"choices": [id_type_label]}},
     ]
+    if quality in _ID_TYPE_QUALITIES:
+        annotation_results.append(
+            {"from_name": "id_type", "to_name": "image", "type": "choices",
+             "value": {"choices": [id_type_label]}}
+        )
 
     # Bounding box — emitted when Stage 1 detected the card position
     if result.crop is not None and result.crop.bbox_orig is not None:
