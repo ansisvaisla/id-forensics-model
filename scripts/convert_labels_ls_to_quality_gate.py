@@ -125,7 +125,7 @@ def main() -> int:
 
     # ── Collect labelled samples ───────────────────────────────────────────────
     samples: list[tuple[str, str, str, int]] = []  # (bucket, s3_key, stem, class_idx)
-    skipped_no_ann = skipped_bad_label = 0
+    skipped_no_ann = skipped_bad_label = skipped_local_upload = 0
 
     for task in tasks:
         label = _extract_quality_label(task)
@@ -139,18 +139,26 @@ def main() -> int:
         image_uri: str = task.get("data", {}).get("image", "")
         if image_uri.startswith("s3://"):
             bucket, s3_key = _parse_s3_uri(image_uri)
-        else:
+        elif image_uri.lstrip("/").startswith("data/upload/"):
+            # Image was uploaded directly to Label Studio (pre-S3 batches) — no S3 key exists.
+            skipped_local_upload += 1
+            continue
+        elif image_uri.startswith("http"):
             # Presigned HTTPS URL — extract key from path component
             from urllib.parse import urlparse
             parsed = urlparse(image_uri)
             s3_key = parsed.path.lstrip("/")
             bucket = args.default_bucket
+        else:
+            skipped_bad_label += 1
+            continue
 
         stem = Path(s3_key).stem.replace("/", "_")
         samples.append((bucket, s3_key, stem, CLASS_MAP[label]))
 
     print(f"  Annotated: {len(samples)}  |  no-annotation: {skipped_no_ann}"
-          f"  |  unknown-label: {skipped_bad_label}")
+          f"  |  unknown-label: {skipped_bad_label}"
+          f"  |  local-upload skipped (no S3 key): {skipped_local_upload}")
     if not samples:
         print("No samples found — nothing to do.", file=sys.stderr)
         return 1
