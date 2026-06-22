@@ -33,9 +33,11 @@ _model = None
 
 def _load_model():
     import torch  # type: ignore
-    import timm  # type: ignore
+    import torch.nn as nn  # type: ignore
+    import torchvision.models as tv_models  # type: ignore
 
-    model = timm.create_model("efficientnet_b0", pretrained=False, num_classes=len(KNOWN_TYPES))
+    model = tv_models.efficientnet_b0(weights=None)
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, len(KNOWN_TYPES))
     state = torch.load(str(MODEL_PATH), map_location="cpu", weights_only=True)
     model.load_state_dict(state)
     model.eval()
