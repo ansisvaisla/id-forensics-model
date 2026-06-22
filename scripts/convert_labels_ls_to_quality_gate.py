@@ -211,7 +211,7 @@ def main() -> int:
     print(
         "\nNext steps:\n"
         "  python scripts/training/train_stage2_screen.py --device cuda --epochs 40\n"
-        "  (or open notebooks/colab_train_stage2_screen.ipynb in Colab)"
+        "  (or run Section 4 in notebooks/colab_workbench.ipynb)"
     )
     return 0 if failed == 0 else 2
 
