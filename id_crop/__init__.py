@@ -325,9 +325,10 @@ def run(image: np.ndarray) -> IdCropResult:
 
     # Coverage check — card fills the frame, no crop needed
     if _card_fills_frame(ml_corners, w, h):
-        ok, _ = crop_is_plausible(image)
+        oriented = _correct_orientation(image)
+        ok, _ = crop_is_plausible(oriented)
         return IdCropResult(
-            cropped_image=image,
+            cropped_image=oriented,
             is_partial_document=False,
             corners_detected=4,
             label="full_frame_id" if ok else "invalid_crop",
@@ -358,6 +359,7 @@ def run(image: np.ndarray) -> IdCropResult:
     # ── Bbox crop fallback ────────────────────────────────────────────────────
     bbox_crop = _ml_bbox_crop(image, conf, ml_corners)
     if bbox_crop is not None:
+        bbox_crop = _correct_orientation(bbox_crop)
         ok, _ = crop_is_plausible(bbox_crop)
         if ok:
             offscreen = _offscreen_mask(ml_corners, w, h)
