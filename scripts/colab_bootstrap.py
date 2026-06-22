@@ -192,13 +192,23 @@ def _labeled_s3_keys() -> list[str]:
         anns = task.get("annotations") or []
         if not any(not a.get("was_cancelled", False) for a in anns):
             continue
+
+        # Path 1: task imported via s3:// URI (batch_label.py --s3-uris)
+        image_uri: str = task.get("data", {}).get("image", "")
+        if image_uri.startswith("s3://"):
+            without_prefix = image_uri.removeprefix("s3://")
+            _, _, s3_key = without_prefix.partition("/")
+            if s3_key and s3_key not in seen:
+                seen.add(s3_key)
+                keys.append(s3_key)
+            continue
+
+        # Path 2: task uploaded directly to Label Studio (file_upload field)
         fu = task.get("file_upload", "")
-        # Strip Label Studio UUID prefix: "24bedc67-2023_05_18_abc.jpg" -> "2023_05_18_abc.jpg"
         flat = fu.split("-", 1)[1] if "-" in fu else fu
         if not flat or flat in seen:
             continue
         seen.add(flat)
-        # Reconstruct S3 key from flat filename convention
         stem, ext = flat.rsplit(".", 1) if "." in flat else (flat, "jpg")
         parts = stem.split("_")
         if len(parts) >= 4 and len(parts[0]) == 4 and parts[0].isdigit():
