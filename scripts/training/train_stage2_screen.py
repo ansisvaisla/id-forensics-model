@@ -1,6 +1,7 @@
-"""Train Stage 2 — Presentation Attack classifier (EfficientNet-B0).
+"""Train Stage 2 — Quality Gate classifier (EfficientNet-B0).
 
-3 classes: screen (0), printout (1), live (2).
+8 classes: screen (0), printout (1), selfie (2), back (3), garbage (4),
+           good_front (5), partial (6), blurry (7).
 
 Usage:
     python scripts/training/train_stage2_screen.py
@@ -24,8 +25,8 @@ _IMG_SIZE = 224
 _BATCH = 32
 _LR = 1e-4
 _PATIENCE = 10
-_NUM_CLASSES = 3
-_CLASS_NAMES = ("screen", "printout", "live")
+_NUM_CLASSES = 8
+_CLASS_NAMES = ("screen", "printout", "selfie", "back", "garbage", "good_front", "partial", "blurry")
 
 
 def _build_dataset(split: str, augment: bool):
@@ -48,7 +49,12 @@ def _build_dataset(split: str, augment: bool):
         aug = [
             T.RandomHorizontalFlip(),
             T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2),
-            T.RandomRotation(10),
+            T.RandomRotation(15),
+            # Heavy 90°/180°/270° rotations so the model learns that rotated
+            # IDs are still good_front/partial, not garbage.
+            T.RandomApply([T.RandomRotation((90, 90))], p=0.25),
+            T.RandomApply([T.RandomRotation((180, 180))], p=0.15),
+            T.RandomApply([T.RandomRotation((270, 270))], p=0.25),
         ]
     else:
         aug = []

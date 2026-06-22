@@ -232,9 +232,15 @@ def _run_pipeline(image_bytes: bytes) -> Optional[object]:
 
 # ── LS prediction builder ─────────────────────────────────────────────────────
 
+_REJECT_QUALITIES = {"screen", "printout", "selfie", "back", "garbage"}
+_LIVE_QUALITIES = {"good_front", "partial", "blurry"}
+
+
 def _quality_from_result(result) -> str:
-    if result.crop and result.crop.label == "selfie_instead_of_document":
-        return "selfie"
+    """Read quality label from quality_gate result; fall back to heuristics."""
+    if result.quality_gate is not None:
+        return result.quality_gate.label
+    # Legacy fallback for results produced without quality_gate
     if result.is_screen_replay:
         return "screen"
     if result.is_printout:
@@ -253,32 +259,27 @@ def _to_ls_predictions(result) -> list[dict]:
         raw = result.id_type.id_type
         id_type_label = raw if raw != "unknown" else "unknown_id"
 
-    if result.is_screen_replay and result.presentation_attack:
-        confidence = result.presentation_attack.screen_score
-    elif result.is_printout and result.presentation_attack:
-        confidence = result.presentation_attack.printout_score
+    # Confidence: use quality_gate score for all reject classes; id_type score for live
+    if result.quality_gate is not None and quality in _REJECT_QUALITIES:
+        confidence = result.quality_gate.confidence
     elif result.id_type is not None:
         confidence = result.id_type.confidence
     else:
         confidence = 0.5
 
-    # id_type is only meaningful when the image actually contains a document.
-    # For selfie/screen/printout/garbage/back the field is intentionally left
-    # blank so annotators don't have to clear a spurious pre-annotation.
-    _ID_TYPE_QUALITIES = {"good_front", "partial", "blurry"}
-
+    # id_type only shown for live images; reject images leave it blank
     annotation_results: list[dict] = [
         {"from_name": "quality", "to_name": "image", "type": "choices",
          "value": {"choices": [quality]}},
     ]
-    if quality in _ID_TYPE_QUALITIES:
+    if quality in _LIVE_QUALITIES:
         annotation_results.append(
             {"from_name": "id_type", "to_name": "image", "type": "choices",
              "value": {"choices": [id_type_label]}}
         )
 
-    # Bounding box — emitted when Stage 1 detected the card position
-    if result.crop is not None and result.crop.bbox_orig is not None:
+    # Bounding box only for live images where Stage 1 detected the card
+    if quality in _LIVE_QUALITIES and result.crop is not None and result.crop.bbox_orig is not None:
         x, y, w, h = result.crop.bbox_orig
         annotation_results.append({
             "from_name": "bbox",

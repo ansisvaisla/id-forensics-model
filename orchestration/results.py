@@ -19,6 +19,19 @@ class IdCropResult:
 
 
 @dataclass
+class QualityGateResult:
+    """Output of the Quality Gate (runs before id_crop on every raw image)."""
+    # One of: screen | printout | selfie | back | garbage | good_front | partial | blurry
+    label: str
+    confidence: float
+    # True when label is good_front / partial / blurry — image proceeds to id_crop
+    is_live: bool
+    # Convenience flags kept for downstream compatibility
+    is_screen_replay: bool
+    is_printout: bool
+
+
+@dataclass
 class PresentationAttackResult:
     """Output of Stage 2 — Presentation Attack Detection."""
     is_screen_replay: bool
@@ -73,6 +86,7 @@ class PipelineResult:
     is_tampered: bool = False
 
     # Detailed results per stage (None if stage was skipped or failed)
+    quality_gate: Optional[QualityGateResult] = None
     crop: Optional[IdCropResult] = None
     presentation_attack: Optional[PresentationAttackResult] = None
     tampering: Optional[TamperingResult] = None
