@@ -336,6 +336,39 @@ def setup(
 
 # ── Weight management ─────────────────────────────────────────────────────────
 
+def restore_weights(stage: str) -> bool:
+    """Copy weights from Drive back into the local repo.
+
+    Returns True if weights are now present, False if not found on Drive.
+    Safe to call even if weights are already present (no-op in that case).
+    """
+    if stage not in WEIGHT_TARGETS:
+        raise ValueError(f"Unknown stage {stage!r}. Choose from: {list(WEIGHT_TARGETS)}")
+
+    local_rel, drive_name = WEIGHT_TARGETS[stage]
+    dst = REPO_DIR / local_rel
+    if dst.is_file():
+        print(f"{stage}: weights already present at {dst}")
+        return True
+
+    src = OUTPUTS_DIR / drive_name
+    if not src.is_file():
+        print(f"WARNING: {stage} weights not found on Drive ({src}). Train this stage first.")
+        return False
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.copy2(src, dst)
+    print(f"{stage}: restored {drive_name} from Drive ({dst.stat().st_size / 1e6:.1f} MB)")
+    return True
+
+
+def restore_all_weights() -> None:
+    """Restore all available stage weights from Drive. Prints a summary."""
+    for stage in WEIGHT_TARGETS:
+        restore_weights(stage)
+
+
 def save_weights(stage: str) -> Path:
     """Copy trained weights to Drive outputs/. Returns Drive destination path."""
     if stage not in WEIGHT_TARGETS:
