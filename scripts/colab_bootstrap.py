@@ -286,18 +286,28 @@ def sync_images_from_s3(workers: int = 16) -> int:
 
 # ── Convert + split ───────────────────────────────────────────────────────────
 
-def rebuild_splits() -> None:
+def rebuild_splits(skip_screen: bool = False) -> None:
     """Run convert_labels_to_yolo + split_yolo_dataset on the Colab VM.
 
     Images are read via the symlink REPO_DIR/data/raw/ → Drive.
     YOLO splits are written to REPO_DIR/data/yolo/ (VM fast disk — not Drive).
+
+    Args:
+        skip_screen: pass True when the quality gate dataset has already been
+                     built by convert_labels_ls_to_quality_gate.py so that
+                     convert_labels_to_yolo does not overwrite it with the
+                     old 3-class screen labels.
     """
     os.chdir(REPO_DIR)
     print("Converting labels to YOLO format...")
-    subprocess.run([sys.executable, "scripts/convert_labels_to_yolo.py"], check=True, cwd=REPO_DIR)
+    cmd = [sys.executable, "scripts/convert_labels_to_yolo.py"]
+    if skip_screen:
+        cmd.append("--no-screen")
+    subprocess.run(cmd, check=True, cwd=REPO_DIR)
     print("Building train/val/test splits...")
+    dataset = "corners" if skip_screen else "both"
     subprocess.run(
-        [sys.executable, "scripts/split_yolo_dataset.py", "--dataset", "both"],
+        [sys.executable, "scripts/split_yolo_dataset.py", "--dataset", dataset],
         check=True, cwd=REPO_DIR,
     )
 
