@@ -93,7 +93,7 @@ def split_dataset(dataset_dir: Path, seed: int, stratify: bool) -> None:
             dst_img = img_out / f"{stem}.jpg"
             dst_lbl = lbl_out / f"{stem}.txt"
             if not dst_img.exists() and src_img.exists():
-                shutil.copy2(src_img, dst_img)
+                dst_img.symlink_to(src_img.resolve())
             if src_lbl.exists():
                 shutil.copy2(src_lbl, dst_lbl)  # always overwrite — labels may have changed format
             moved += 1

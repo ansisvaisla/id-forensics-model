@@ -254,18 +254,18 @@ def main() -> int:
         for bucket, s3_key, stem, class_idx in iterable:
             dest_img = img_dir / f"{stem}.jpg"
 
-            # Check Drive cache first — copy to VM instead of re-downloading
+            # Check Drive cache first — symlink to VM instead of re-downloading
             if args.image_cache:
                 cached = args.image_cache / f"{stem}.jpg"
                 if cached.is_file():
-                    shutil.copy2(cached, dest_img)
+                    dest_img.symlink_to(cached.resolve())
                     cached_hits += 1
                     (lbl_dir / f"{stem}.txt").write_text(str(class_idx), encoding="utf-8")
                     continue
                 # Not in cache yet — download from S3 and save to cache
                 ok = _download_image(client, bucket, s3_key, cached)
                 if ok:
-                    shutil.copy2(cached, dest_img)
+                    dest_img.symlink_to(cached.resolve())
                 else:
                     failed += 1
                     continue

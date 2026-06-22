@@ -195,7 +195,7 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
         if not dry_run:
             dest_img = out_images / flat
             if not dest_img.exists():
-                shutil.copy2(img_path, dest_img)
+                dest_img.symlink_to(img_path.resolve())
             (out_labels / f"{stem}.txt").write_text(label_line + "\n", encoding="utf-8")
         written += 1
 
@@ -250,7 +250,7 @@ def convert_screen(tasks: list[dict], image_index: dict[str, Path], dry_run: boo
         if not dry_run:
             dest_img = out_images / flat
             if not dest_img.exists():
-                shutil.copy2(img_path, dest_img)
+                dest_img.symlink_to(img_path.resolve())
             # Always overwrite labels to propagate class-mapping changes
             (out_labels / f"{stem}.txt").write_text(f"{label}\n", encoding="utf-8")
 
@@ -322,7 +322,7 @@ def convert_id_type(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
         if not dry_run:
             dest = out_root / id_type_norm / flat
             if not dest.exists():
-                shutil.copy2(img_path, dest)
+                dest.symlink_to(img_path.resolve())
         manifest_rows.append((stem, id_type_norm))
         written += 1
 
