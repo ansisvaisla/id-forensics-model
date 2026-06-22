@@ -29,12 +29,14 @@ import argparse
 import json
 import os
 import random
+import shutil
 import sys
 from collections import Counter
 from pathlib import Path
 from typing import Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+S3_PREFIX = "id-doc-front/"
 
 CLASS_MAP: dict[str, int] = {
     "screen": 0,
@@ -83,6 +85,51 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
     return bucket, key
 
 
+def _flat_upload_name(file_upload: str) -> str:
+    """Strip Label Studio's random upload prefix from an uploaded filename."""
+    name = Path(file_upload).name
+    return name.split("-", 1)[1] if "-" in name else name
+
+
+def _s3_key_from_flat_upload_name(flat_name: str) -> Optional[str]:
+    """Reconstruct original S3 key from YYYY_MM_DD_<filename> upload names."""
+    stem, ext = flat_name.rsplit(".", 1) if "." in flat_name else (flat_name, "jpg")
+    parts = stem.split("_")
+    if len(parts) < 4 or not (len(parts[0]) == 4 and parts[0].isdigit()):
+        return None
+    year, month, day = parts[0], parts[1], parts[2]
+    filename = "_".join(parts[3:])
+    return f"{S3_PREFIX}{year}/{month}/{day}/{filename}.{ext}"
+
+
+def _safe_stem_from_s3_key(s3_key: str) -> str:
+    """Use a collision-resistant filename stem for copied training images."""
+    rel = s3_key.removeprefix(S3_PREFIX).lstrip("/")
+    return Path(rel.replace("/", "_")).stem
+
+
+def _resolve_image_source(task: dict, default_bucket: str) -> Optional[tuple[str, str]]:
+    """Return (bucket, s3_key) for S3, presigned URL, or LS-uploaded tasks."""
+    image_uri: str = task.get("data", {}).get("image", "")
+    if image_uri.startswith("s3://"):
+        return _parse_s3_uri(image_uri)
+
+    if image_uri.startswith("http"):
+        # Presigned HTTPS URL — extract key from path component.
+        from urllib.parse import urlparse
+        parsed = urlparse(image_uri)
+        s3_key = parsed.path.lstrip("/")
+        return default_bucket, s3_key
+
+    if image_uri.lstrip("/").startswith("data/upload/"):
+        flat_name = _flat_upload_name(task.get("file_upload", "") or image_uri)
+        s3_key = _s3_key_from_flat_upload_name(flat_name)
+        if s3_key:
+            return default_bucket, s3_key
+
+    return None
+
+
 def _extract_quality_label(task: dict) -> Optional[str]:
     """Return the quality choice from the first submitted annotation, or None."""
     for ann in task.get("annotations", []):
@@ -125,7 +172,7 @@ def main() -> int:
 
     # ── Collect labelled samples ───────────────────────────────────────────────
     samples: list[tuple[str, str, str, int]] = []  # (bucket, s3_key, stem, class_idx)
-    skipped_no_ann = skipped_bad_label = skipped_local_upload = 0
+    skipped_no_ann = skipped_bad_label = skipped_unresolved_uri = 0
 
     for task in tasks:
         label = _extract_quality_label(task)
@@ -136,29 +183,18 @@ def main() -> int:
             skipped_bad_label += 1
             continue
 
-        image_uri: str = task.get("data", {}).get("image", "")
-        if image_uri.startswith("s3://"):
-            bucket, s3_key = _parse_s3_uri(image_uri)
-        elif image_uri.lstrip("/").startswith("data/upload/"):
-            # Image was uploaded directly to Label Studio (pre-S3 batches) — no S3 key exists.
-            skipped_local_upload += 1
+        source = _resolve_image_source(task, args.default_bucket)
+        if source is None:
+            skipped_unresolved_uri += 1
             continue
-        elif image_uri.startswith("http"):
-            # Presigned HTTPS URL — extract key from path component
-            from urllib.parse import urlparse
-            parsed = urlparse(image_uri)
-            s3_key = parsed.path.lstrip("/")
-            bucket = args.default_bucket
-        else:
-            skipped_bad_label += 1
-            continue
+        bucket, s3_key = source
 
-        stem = Path(s3_key).stem.replace("/", "_")
+        stem = _safe_stem_from_s3_key(s3_key)
         samples.append((bucket, s3_key, stem, CLASS_MAP[label]))
 
     print(f"  Annotated: {len(samples)}  |  no-annotation: {skipped_no_ann}"
           f"  |  unknown-label: {skipped_bad_label}"
-          f"  |  local-upload skipped (no S3 key): {skipped_local_upload}")
+          f"  |  unresolved image URI: {skipped_unresolved_uri}")
     if not samples:
         print("No samples found — nothing to do.", file=sys.stderr)
         return 1
@@ -184,6 +220,10 @@ def main() -> int:
     print(f"\nSplit → train: {len(train_samples)}  val: {len(val_samples)}")
 
     # ── Create output directories ─────────────────────────────────────────────
+    for child in ("images", "labels"):
+        path = args.out / child
+        if path.exists():
+            shutil.rmtree(path)
     for split in ("train", "val"):
         (args.out / "images" / split).mkdir(parents=True, exist_ok=True)
         (args.out / "labels" / split).mkdir(parents=True, exist_ok=True)
