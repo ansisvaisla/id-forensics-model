@@ -360,7 +360,7 @@ def main() -> int:
     image_data = _download_all(candidates, workers=args.workers) if not args.skip_inference else {}
     if not args.skip_inference:
         print(f"Running pipeline inference"
-              f"{' (Textract skipped)' if skip_field else ''}...")
+              f"{' (Textract skipped)' if args.skip_field_extractor else ''}...")
 
     try:
         from tqdm import tqdm  # type: ignore
