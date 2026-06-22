@@ -262,15 +262,33 @@ def _to_ls_predictions(result) -> list[dict]:
     else:
         confidence = 0.5
 
+    annotation_results: list[dict] = [
+        {"from_name": "quality", "to_name": "image", "type": "choices",
+         "value": {"choices": [quality]}},
+        {"from_name": "id_type", "to_name": "image", "type": "choices",
+         "value": {"choices": [id_type_label]}},
+    ]
+
+    # Bounding box — emitted when Stage 1 detected the card position
+    if result.crop is not None and result.crop.bbox_orig is not None:
+        x, y, w, h = result.crop.bbox_orig
+        annotation_results.append({
+            "from_name": "bbox",
+            "to_name": "image",
+            "type": "rectanglelabels",
+            "value": {
+                "x": x,
+                "y": y,
+                "width": w,
+                "height": h,
+                "rectanglelabels": ["id_card"],
+            },
+        })
+
     return [{
         "model_version": _MODEL_VERSION,
         "score": round(float(confidence), 4),
-        "result": [
-            {"from_name": "quality", "to_name": "image", "type": "choices",
-             "value": {"choices": [quality]}},
-            {"from_name": "id_type", "to_name": "image", "type": "choices",
-             "value": {"choices": [id_type_label]}},
-        ],
+        "result": annotation_results,
     }]
 
 

@@ -13,6 +13,9 @@ class IdCropResult:
     corners_detected: int  # 0–4
     label: str  # e.g. 'selfie_instead_of_document', 'id_card', 'no_id_detected'
     confidence: float
+    # Bounding box in the *original* image as (x%, y%, w%, h%) — 0-100 percentages.
+    # Used by batch_label.py to emit rectanglelabels in Label Studio JSON.
+    bbox_orig: Optional[tuple[float, float, float, float]] = None
 
 
 @dataclass

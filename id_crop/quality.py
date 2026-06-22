@@ -99,7 +99,7 @@ def crop_ready_for_classification(
     crop_label: Optional[str] = None,
 ) -> tuple[bool, str]:
     """Gate for Stage 4 — only classify when Stage 1 succeeded and crop looks real."""
-    success_labels = {"id_card", "id_card_reconstructed", "full_frame_id"}
+    success_labels = {"id_card", "id_card_reconstructed", "full_frame_id", "bbox_crop"}
     if crop_label is not None and crop_label not in success_labels:
         return False, f"crop_stage_failed:{crop_label}"
 

@@ -247,6 +247,22 @@ def _try_warp(image: np.ndarray, corners: np.ndarray,
     )
 
 
+def _corners_to_bbox_pct(
+    corners: np.ndarray, img_w: int, img_h: int
+) -> tuple[float, float, float, float]:
+    """Convert corner points to (x%, y%, w%, h%) percentages of the original image."""
+    x1 = float(corners[:, 0].min()) / img_w * 100.0
+    y1 = float(corners[:, 1].min()) / img_h * 100.0
+    x2 = float(corners[:, 0].max()) / img_w * 100.0
+    y2 = float(corners[:, 1].max()) / img_h * 100.0
+    return (
+        round(max(0.0, x1), 2),
+        round(max(0.0, y1), 2),
+        round(min(100.0, x2 - x1), 2),
+        round(min(100.0, y2 - y1), 2),
+    )
+
+
 # ── Main entry point ─────────────────────────────────────────────────────────
 
 def _ml_bbox_crop(image: np.ndarray, conf: float, corners: np.ndarray) -> Optional[np.ndarray]:
@@ -305,6 +321,8 @@ def run(image: np.ndarray) -> IdCropResult:
             confidence=conf,
         )
 
+    bbox_pct = _corners_to_bbox_pct(ml_corners, w, h)
+
     # Coverage check — card fills the frame, no crop needed
     if _card_fills_frame(ml_corners, w, h):
         ok, _ = crop_is_plausible(image)
@@ -314,6 +332,7 @@ def run(image: np.ndarray) -> IdCropResult:
             corners_detected=4,
             label="full_frame_id" if ok else "invalid_crop",
             confidence=conf,
+            bbox_orig=(0.0, 0.0, 100.0, 100.0),
         )
 
     # ── Attempt perspective warp if corners are trustworthy ───────────────────
@@ -333,6 +352,7 @@ def run(image: np.ndarray) -> IdCropResult:
                 method="ml",
             )
             if warp_result is not None:
+                warp_result.bbox_orig = bbox_pct
                 return warp_result
 
     # ── Bbox crop fallback ────────────────────────────────────────────────────
@@ -348,6 +368,7 @@ def run(image: np.ndarray) -> IdCropResult:
                 corners_detected=4,
                 label="bbox_crop",
                 confidence=conf,
+                bbox_orig=bbox_pct,
             )
 
     # ── Nothing worked ────────────────────────────────────────────────────────
