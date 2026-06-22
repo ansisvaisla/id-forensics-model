@@ -283,6 +283,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate Label Studio import JSON with pipeline pre-annotations"
     )
+    parser.add_argument("--s3-uris", action="store_true",
+                        help="Use s3:// URIs instead of presigned HTTPS URLs. "
+                             "Requires Label Studio S3 cloud storage integration. "
+                             "Avoids CORS issues when running LS on localhost.")
     parser.add_argument("--from-csv", type=Path, default=None, metavar="CSV",
                         help="Read candidates from CSV instead of DB")
     parser.add_argument("--limit", type=int, default=1000)
@@ -338,17 +342,22 @@ def main() -> int:
     print(f"Candidates to label: {len(candidates)}")
 
     # ── Step 3: parallel download + URL generation ────────────────────────────
-    print(f"Downloading {len(candidates)} images in parallel ({args.workers} threads)...")
-    image_data = _download_all(candidates, workers=args.workers) if not args.skip_inference else {}
-
-    print("Generating presigned URLs in parallel...")
-    urls = _generate_urls_all(candidates, args.url_expiry, workers=args.workers)
+    if args.s3_uris:
+        print("Using s3:// URIs (Label Studio S3 cloud storage mode)...")
+        urls = {
+            i: f"s3://{(row.bucket if hasattr(row, 'bucket') else row['bucket'])}/{(row.s3_key if hasattr(row, 's3_key') else row['s3_key'])}"
+            for i, row in enumerate(candidates)
+        }
+    else:
+        print("Generating presigned URLs in parallel...")
+        urls = _generate_urls_all(candidates, args.url_expiry, workers=args.workers)
 
     # ── Step 4: pipeline inference + build tasks ──────────────────────────────
     tasks: list[dict] = []
     failed = 0
 
-    skip_field = bool(os.environ.get("SKIP_FIELD_EXTRACTOR"))
+    print(f"Downloading {len(candidates)} images in parallel ({args.workers} threads)...")
+    image_data = _download_all(candidates, workers=args.workers) if not args.skip_inference else {}
     if not args.skip_inference:
         print(f"Running pipeline inference"
               f"{' (Textract skipped)' if skip_field else ''}...")
