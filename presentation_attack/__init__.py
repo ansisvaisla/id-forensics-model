@@ -1,10 +1,19 @@
-"""Stage 2 — Presentation Attack Detection.
+"""Stage 2 — Quality Gate / Presentation Attack Detection.
 
-Entry point: run(image) -> PresentationAttackResult
+Entry point: run(image) -> QualityGateResult
 
-3-class EfficientNet-B0: screen (0) / printout (1) / live (2).
+8-class EfficientNet-B0:
+    screen (0) | printout (1) | selfie (2) | back (3) | garbage (4)
+    good_front (5) | partial (6) | blurry (7)
 
-Shadow mode: exceptions are caught by orchestration layer.
+Decision strategy — binary rejection:
+    Instead of argmax, we sum the probabilities of all 5 reject classes.
+    If that combined reject_score exceeds REJECT_THRESHOLD the image is flagged,
+    regardless of which single class has the highest softmax output.
+    This prevents edge cases like a screen replay being labelled "blurry" (argmax)
+    while still carrying a significant combined screen+printout probability.
+
+Shadow mode: exceptions are caught by the orchestration layer.
 """
 from __future__ import annotations
 
@@ -12,15 +21,21 @@ from pathlib import Path
 
 import numpy as np
 
-from orchestration.results import PresentationAttackResult
+from orchestration.results import QualityGateResult
 
 SCREEN_MODEL_PATH = (
     Path(__file__).resolve().parents[1] / "models" / "stage2_screen" / "best.pt"
 )
-_NUM_CLASSES = 3
-# Thresholds: flag attack if probability exceeds these values
-_SCREEN_THRESHOLD = 0.50
-_PRINTOUT_THRESHOLD = 0.50
+
+_NUM_CLASSES = 8
+_CLASS_NAMES = ("screen", "printout", "selfie", "back", "garbage", "good_front", "partial", "blurry")
+_REJECT_INDICES = (0, 1, 2, 3, 4)   # screen, printout, selfie, back, garbage
+_ACCEPT_INDICES = (5, 6, 7)          # good_front, partial, blurry
+
+# Reject if the combined probability of all 5 reject classes exceeds this.
+# At 0.35 the model must be fairly confident an image is legitimate to pass.
+# Tune upward (more permissive) or downward (stricter) as needed.
+_REJECT_THRESHOLD = 0.35
 
 _screen_model = None
 
@@ -50,7 +65,6 @@ def _get_screen_model():
 def _preprocess(image: np.ndarray) -> "torch.Tensor":
     """Resize and normalise image for EfficientNet-B0."""
     import cv2  # type: ignore
-    import torch  # type: ignore
     import torchvision.transforms as T  # type: ignore
 
     transform = T.Compose([
@@ -63,23 +77,24 @@ def _preprocess(image: np.ndarray) -> "torch.Tensor":
     return transform(rgb).unsqueeze(0)
 
 
-def run(image: np.ndarray) -> PresentationAttackResult:
-    """Classify image as screen replay, printout, or live genuine ID.
+def run(image: np.ndarray) -> QualityGateResult:
+    """Classify image through the quality gate.
 
     Args:
-        image: BGR numpy array (cropped or full — runs on raw upload in shadow mode).
+        image: BGR numpy array (raw upload — runs before id_crop).
 
     Returns:
-        PresentationAttackResult with is_screen_replay, is_printout, and per-class scores.
-        Classes: 0=screen, 1=printout, 2=live.
+        QualityGateResult with is_live flag and per-class confidence.
+        is_live=True  → image proceeds to id_crop + downstream stages.
+        is_live=False → image is rejected (screen / printout / selfie / back / garbage).
     """
     if not SCREEN_MODEL_PATH.is_file():
-        return PresentationAttackResult(
+        return QualityGateResult(
+            label="model_not_trained",
+            confidence=0.0,
+            is_live=True,   # fail-open: don't block if model missing
             is_screen_replay=False,
             is_printout=False,
-            screen_score=0.0,
-            printout_score=0.0,
-            label="model_not_trained",
         )
 
     import torch  # type: ignore
@@ -91,22 +106,29 @@ def run(image: np.ndarray) -> PresentationAttackResult:
         logits = model(tensor)
         probs = F.softmax(logits, dim=1)[0]
 
-    screen_prob = float(probs[0])
-    printout_prob = float(probs[1])
-    is_screen = screen_prob >= _SCREEN_THRESHOLD
-    is_printout = printout_prob >= _PRINTOUT_THRESHOLD
+    probs_list = probs.tolist()
+    argmax_idx = int(probs.argmax())
+    argmax_label = _CLASS_NAMES[argmax_idx]
+    argmax_conf = float(probs[argmax_idx])
 
-    if is_screen:
-        label = "screen"
-    elif is_printout:
-        label = "printout"
+    # Binary rejection: sum all reject-class probabilities.
+    reject_score = sum(probs_list[i] for i in _REJECT_INDICES)
+    is_rejected = reject_score >= _REJECT_THRESHOLD
+
+    # For is_screen_replay / is_printout flags preserve individual scores.
+    screen_prob = probs_list[0]
+    printout_prob = probs_list[1]
+
+    if is_rejected:
+        # Use the argmax label as the rejection reason (for logging/debugging).
+        label = argmax_label if argmax_idx in _REJECT_INDICES else "reject_combined"
     else:
-        label = "live"
+        label = argmax_label  # good_front / partial / blurry
 
-    return PresentationAttackResult(
-        is_screen_replay=is_screen,
-        is_printout=is_printout,
-        screen_score=screen_prob,
-        printout_score=printout_prob,
+    return QualityGateResult(
         label=label,
+        confidence=argmax_conf if not is_rejected else reject_score,
+        is_live=not is_rejected,
+        is_screen_replay=argmax_label == "screen" or screen_prob >= 0.4,
+        is_printout=argmax_label == "printout" or printout_prob >= 0.4,
     )
