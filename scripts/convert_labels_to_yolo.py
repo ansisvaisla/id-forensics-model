@@ -175,6 +175,12 @@ def _parse_tasks(export_path: Path) -> list[dict]:
     return json.loads(export_path.read_text(encoding="utf-8"))
 
 
+# Quality labels that make sense as corner training data (actual ID cards).
+# Reject labels (screen/printout/selfie/back/garbage) may still have a polygon
+# drawn from a pipeline pre-annotation that the labeler corrected — exclude them.
+_CORNERS_ALLOWED_QUALITY = {"good_front", "partial", "blurry"}
+
+
 def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bool = False) -> None:
     """Export 4-corner polygon labels to YOLOv8 Pose (keypoint) format.
 
@@ -195,6 +201,7 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
     skipped_no_poly = 0
     skipped_no_image = 0
     skipped_fullframe = 0
+    skipped_quality = 0
 
     for task in tasks:
         anns = task.get("annotations") or []
@@ -204,18 +211,28 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
             continue
 
         polygon = None
+        quality = None
         for ann in real_anns:
             for r in ann.get("result", []):
                 if r.get("type") == "polygonlabels":
                     pts = r.get("value", {}).get("points", [])
                     if len(pts) == 4:
                         polygon = r
-                        break
-            if polygon:
+                if r.get("type") == "choices" and r.get("from_name") == "quality":
+                    choices = r.get("value", {}).get("choices", [])
+                    if choices:
+                        quality = choices[0]
+            if polygon and quality:
                 break
 
         if polygon is None:
             skipped_no_poly += 1
+            continue
+
+        # Only train corners on actual ID images — reject selfie/screen/etc.
+        # even if the pipeline drew a polygon on them before the label was corrected.
+        if quality is not None and quality not in _CORNERS_ALLOWED_QUALITY:
+            skipped_quality += 1
             continue
 
         pts = polygon["value"]["points"]
@@ -254,7 +271,8 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
         _write_corners_yaml()
 
     print(f"Corners: {written} written, {skipped_cancelled} cancelled, "
-          f"{skipped_no_poly} no polygon, {skipped_fullframe} fullframe-partial skipped, "
+          f"{skipped_no_poly} no polygon, {skipped_quality} wrong quality label, "
+          f"{skipped_fullframe} fullframe-partial skipped, "
           f"{skipped_no_image} image not found on disk")
 
 
