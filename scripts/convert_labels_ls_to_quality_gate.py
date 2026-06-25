@@ -258,6 +258,8 @@ def main() -> int:
             if args.image_cache:
                 cached = args.image_cache / f"{stem}.jpg"
                 if cached.is_file():
+                    if dest_img.is_symlink() or dest_img.exists():
+                        dest_img.unlink()
                     dest_img.symlink_to(cached.resolve())
                     cached_hits += 1
                     (lbl_dir / f"{stem}.txt").write_text(str(class_idx), encoding="utf-8")
@@ -265,6 +267,8 @@ def main() -> int:
                 # Not in cache yet — download from S3 and save to cache
                 ok = _download_image(client, bucket, s3_key, cached)
                 if ok:
+                    if dest_img.is_symlink() or dest_img.exists():
+                        dest_img.unlink()
                     dest_img.symlink_to(cached.resolve())
                 else:
                     failed += 1
