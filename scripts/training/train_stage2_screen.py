@@ -204,14 +204,28 @@ def main() -> int:
     model = _build_model(pretrained=not args.no_pretrained)
     model = model.to(device)
 
-    # Label smoothing reduces overconfidence and helps generalise on small classes
-    criterion = nn.CrossEntropyLoss(weight=weight, label_smoothing=0.1)
+    # AdamW (weight decay) outperforms Adam on small datasets.
+    # No label smoothing — it hurts with extreme class imbalance (back=18 samples).
+    criterion = nn.CrossEntropyLoss(weight=weight)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     best_val_acc = 0.0
     patience_counter = 0
-    epoch = 0
 
-    def _run_val() -> float:
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        total_loss = 0.0
+        for imgs, labels in train_loader:
+            imgs, labels = imgs.to(device), labels.to(device)
+            optimizer.zero_grad()
+            loss = criterion(model(imgs), labels)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        scheduler.step()
+
         model.eval()
         correct = total = 0
         with torch.no_grad():
@@ -220,55 +234,18 @@ def main() -> int:
                 preds = model(imgs).argmax(dim=1)
                 correct += (preds == labels).sum().item()
                 total += labels.size(0)
-        return correct / total if total else 0.0
+        val_acc = correct / total if total else 0.0
+        print(f"Epoch {epoch:3d}  loss={total_loss / len(train_loader):.4f}  val_acc={val_acc:.4f}")
 
-    def _train_phase(
-        n_epochs: int, lr: float, freeze_backbone: bool, phase_name: str
-    ) -> None:
-        nonlocal best_val_acc, patience_counter, epoch
-
-        for param in model.features.parameters():
-            param.requires_grad = not freeze_backbone
-
-        trainable = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.AdamW(trainable, lr=lr, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
-
-        print(f"\n[{phase_name}] backbone={'frozen' if freeze_backbone else 'unfrozen'}  lr={lr}  epochs={n_epochs}")
-
-        for _ in range(n_epochs):
-            epoch += 1
-            model.train()
-            total_loss = 0.0
-            for imgs, labels in train_loader:
-                imgs, labels = imgs.to(device), labels.to(device)
-                optimizer.zero_grad()
-                loss = criterion(model(imgs), labels)
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item()
-            scheduler.step()
-
-            val_acc = _run_val()
-            print(f"Epoch {epoch:3d}  loss={total_loss / len(train_loader):.4f}  val_acc={val_acc:.4f}")
-
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                torch.save(model.state_dict(), str(OUTPUT_DIR / "best.pt"))
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                if patience_counter >= _PATIENCE:
-                    print(f"Early stop at epoch {epoch} (patience={_PATIENCE})")
-                    return
-
-    # Phase 1: train only the classifier head — backbone frozen.
-    # Lets the new head converge without destroying pretrained features.
-    _train_phase(n_epochs=10, lr=args.lr * 3, freeze_backbone=True, phase_name="Phase 1 — head only")
-
-    # Phase 2: unfreeze everything and fine-tune with a lower LR.
-    patience_counter = 0
-    _train_phase(n_epochs=args.epochs, lr=args.lr, freeze_backbone=False, phase_name="Phase 2 — full model")
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            torch.save(model.state_dict(), str(OUTPUT_DIR / "best.pt"))
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= _PATIENCE:
+                print(f"Early stop at epoch {epoch} (patience={_PATIENCE})")
+                break
 
     torch.save(model.state_dict(), str(OUTPUT_DIR / "last.pt"))
     print(f"\nBest val acc: {best_val_acc:.4f}")
