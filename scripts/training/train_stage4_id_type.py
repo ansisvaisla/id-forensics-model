@@ -25,8 +25,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import random
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -88,6 +91,25 @@ def _build_dataset(split: str, augment: bool):
                     self.samples.append((img_path, cls_idx))
                 for img_path in sorted(cls_dir.glob("*.jpeg")):
                     self.samples.append((img_path, cls_idx))
+            self._maybe_localise()
+
+        def _maybe_localise(self) -> None:
+            """Copy Drive-symlinked images to /tmp so DataLoader workers read from local NVMe."""
+            if not self.samples:
+                return
+            first = self.samples[0][0].resolve()
+            if "/content/drive" not in str(first):
+                return
+            local_dir = Path(tempfile.mkdtemp(prefix="stage4_imgs_"))
+            print(f"  Copying {len(self.samples)} images to local disk ({local_dir}) ...")
+            new_samples = []
+            for img_path, label in self.samples:
+                dst = local_dir / img_path.name
+                if not dst.exists():
+                    shutil.copy2(img_path.resolve(), dst)
+                new_samples.append((dst, label))
+            self.samples = new_samples
+            print("  Done — images now on fast local disk.")
 
         def __len__(self) -> int:
             return len(self.samples)
@@ -190,10 +212,16 @@ def main() -> int:
         n = dist.get(i, 0)
         print(f"  {cls:20s}: {n}")
 
+    use_cuda = device.type == "cuda"
+    num_workers = min(4, os.cpu_count() or 2)
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch, shuffle=True, num_workers=0, drop_last=True
+        train_ds, batch_size=args.batch, shuffle=True, drop_last=True,
+        num_workers=num_workers, pin_memory=use_cuda, persistent_workers=num_workers > 0,
     )
-    val_loader = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=0)
+    val_loader = DataLoader(
+        val_ds, batch_size=args.batch, shuffle=False,
+        num_workers=num_workers, pin_memory=use_cuda, persistent_workers=num_workers > 0,
+    )
 
     model = _build_model(pretrained=not args.no_pretrained, num_classes=len(CLASSES))
     model = model.to(device)

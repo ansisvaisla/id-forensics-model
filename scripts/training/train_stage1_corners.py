@@ -70,6 +70,8 @@ def main() -> int:
         save=True,
         plots=True,
         verbose=True,
+        cache="ram",   # cache decoded images in RAM — eliminates Drive FUSE reads after first epoch
+        workers=4,     # parallel image loading
     )
 
     best = OUTPUT_DIR / "weights" / "best.pt"
