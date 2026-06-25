@@ -116,7 +116,7 @@ def _build_dataset(split: str, augment: bool):
 
 
 def _build_model(pretrained: bool):
-    """Build EfficientNet-B0 with 3-class head."""
+    """Build EfficientNet-B0 with 8-class head."""
     import torch.nn as nn  # type: ignore
     from torchvision.models import EfficientNet_B0_Weights, efficientnet_b0  # type: ignore
 
@@ -228,17 +228,40 @@ def main() -> int:
 
         model.eval()
         correct = total = 0
+        per_class_tp: dict[int, int] = {}
+        per_class_tp_fp: dict[int, int] = {}
+        per_class_tp_fn: dict[int, int] = {}
         with torch.no_grad():
             for imgs, labels in val_loader:
                 imgs, labels = imgs.to(device), labels.to(device)
                 preds = model(imgs).argmax(dim=1)
                 correct += (preds == labels).sum().item()
                 total += labels.size(0)
-        val_acc = correct / total if total else 0.0
-        print(f"Epoch {epoch:3d}  loss={total_loss / len(train_loader):.4f}  val_acc={val_acc:.4f}")
+                for gt, pr in zip(labels.tolist(), preds.tolist()):
+                    per_class_tp[gt] = per_class_tp.get(gt, 0) + (1 if gt == pr else 0)
+                    per_class_tp_fp[pr] = per_class_tp_fp.get(pr, 0) + 1
+                    per_class_tp_fn[gt] = per_class_tp_fn.get(gt, 0) + 1
 
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        val_acc = correct / total if total else 0.0
+
+        # Macro-F1 across all classes that appear in val set.
+        f1s = []
+        for c in range(_NUM_CLASSES):
+            tp = per_class_tp.get(c, 0)
+            pred_pos = per_class_tp_fp.get(c, 0)
+            real_pos = per_class_tp_fn.get(c, 0)
+            prec = tp / pred_pos if pred_pos else 0.0
+            rec = tp / real_pos if real_pos else 0.0
+            f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+            if real_pos > 0:
+                f1s.append(f1)
+        macro_f1 = sum(f1s) / len(f1s) if f1s else 0.0
+
+        print(f"Epoch {epoch:3d}  loss={total_loss / len(train_loader):.4f}"
+              f"  val_acc={val_acc:.4f}  macro_f1={macro_f1:.4f}")
+
+        if macro_f1 > best_val_acc:
+            best_val_acc = macro_f1
             torch.save(model.state_dict(), str(OUTPUT_DIR / "best.pt"))
             patience_counter = 0
         else:
@@ -248,7 +271,7 @@ def main() -> int:
                 break
 
     torch.save(model.state_dict(), str(OUTPUT_DIR / "last.pt"))
-    print(f"\nBest val acc: {best_val_acc:.4f}")
+    print(f"\nBest macro-F1: {best_val_acc:.4f}")
     print(f"Weights: {OUTPUT_DIR / 'best.pt'}")
     return 0
 
