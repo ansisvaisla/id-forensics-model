@@ -63,6 +63,24 @@ def _s3_client():
     )
 
 
+def _check_credentials(client, bucket: str) -> None:
+    """Probe S3 with a cheap list call to catch expired credentials early."""
+    try:
+        client.list_objects_v2(Bucket=bucket, MaxKeys=1)
+    except Exception as exc:
+        msg = str(exc)
+        if "400" in msg or "ExpiredToken" in msg or "InvalidClientTokenId" in msg or "InvalidToken" in msg:
+            print(
+                "\n*** AWS credentials error (400 Bad Request) ***\n"
+                "Your AWS_SESSION_TOKEN has likely expired.\n"
+                "In Colab: Secrets → refresh AWS_SESSION_TOKEN (and KEY/SECRET if SSO-rotated),\n"
+                "then re-run this cell.\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        raise
+
+
 def _download_image(client, bucket: str, s3_key: str, dest: Path) -> bool:
     """Download s3_key → dest. Returns True on success."""
     if dest.is_file():
@@ -74,6 +92,14 @@ def _download_image(client, bucket: str, s3_key: str, dest: Path) -> bool:
         dest.write_bytes(buf.getvalue())
         return True
     except Exception as exc:
+        msg = str(exc)
+        if "400" in msg and ("HeadObject" in msg or "ExpiredToken" in msg or "InvalidToken" in msg):
+            print(
+                f"\n*** 400 on {s3_key} — AWS session token likely expired. ***\n"
+                "Refresh AWS_SESSION_TOKEN in Colab Secrets and re-run.\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         print(f"  SKIP {s3_key}: {exc}", file=sys.stderr)
         return False
 
@@ -244,6 +270,7 @@ def main() -> int:
         _tqdm = None
 
     client = _s3_client()
+    _check_credentials(client, args.default_bucket)
     failed = 0
     cached_hits = 0
 
