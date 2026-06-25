@@ -12,8 +12,11 @@ Output: models/stage2_screen/best.pt
 from __future__ import annotations
 
 import argparse
+import os
 import random
+import shutil
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 
@@ -73,6 +76,28 @@ def _build_dataset(split: str, augment: bool):
                     continue
                 label = int(lbl_path.read_text(encoding="utf-8").strip())
                 self.samples.append((img_path, label))
+            # If images live on a slow FUSE mount (e.g. Google Drive symlinks),
+            # copy them to the local VM disk so DataLoader workers can read fast.
+            self._maybe_localise()
+
+        def _maybe_localise(self) -> None:
+            """Copy Drive-symlinked images to /tmp so workers read from local NVMe."""
+            if not self.samples:
+                return
+            first = self.samples[0][0].resolve()
+            drive_marker = "/content/drive"
+            if drive_marker not in str(first):
+                return  # already local — nothing to do
+            local_dir = Path(tempfile.mkdtemp(prefix="stage2_imgs_"))
+            print(f"  Copying {len(self.samples)} images to local disk ({local_dir}) ...")
+            new_samples = []
+            for img_path, label in self.samples:
+                dst = local_dir / img_path.name
+                if not dst.exists():
+                    shutil.copy2(img_path.resolve(), dst)
+                new_samples.append((dst, label))
+            self.samples = new_samples
+            print(f"  Done — images now on fast local disk.")
 
         def __len__(self) -> int:
             return len(self.samples)
@@ -80,6 +105,10 @@ def _build_dataset(split: str, augment: bool):
         def __getitem__(self, idx: int):
             img_path, label = self.samples[idx]
             img = cv2.imread(str(img_path))
+            if img is None:
+                # Return a blank tensor on read failure rather than crashing a worker
+                import numpy as np
+                img = np.zeros((_IMG_SIZE, _IMG_SIZE, 3), dtype=np.uint8)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             return transform(img), label
 
@@ -161,8 +190,16 @@ def main() -> int:
     print(f"Train: {len(train_ds)}  Val: {len(val_ds)}")
     weight = _compute_class_weights(train_ds.samples, device)
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=0)
+    use_cuda = device.type == "cuda"
+    num_workers = min(4, os.cpu_count() or 2)
+    train_loader = DataLoader(
+        train_ds, batch_size=args.batch, shuffle=True,
+        num_workers=num_workers, pin_memory=use_cuda, persistent_workers=num_workers > 0,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=args.batch, shuffle=False,
+        num_workers=num_workers, pin_memory=use_cuda, persistent_workers=num_workers > 0,
+    )
 
     model = _build_model(pretrained=not args.no_pretrained)
     model = model.to(device)
