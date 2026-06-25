@@ -306,6 +306,11 @@ def rebuild_splits(skip_screen: bool = False) -> None:
     cmd = [sys.executable, "scripts/convert_labels_to_yolo.py"]
     if skip_screen:
         cmd.append("--no-screen")
+    # Pass the Drive screen_images cache as an extra image root so that
+    # good_front/partial images downloaded by convert_labels_ls_to_quality_gate.py
+    # are found by the corners converter (they live in DRIVE_SCREEN_DIR, not data/raw/).
+    if DRIVE_SCREEN_DIR.is_dir():
+        cmd += ["--extra-image-roots", str(DRIVE_SCREEN_DIR)]
     subprocess.run(cmd, check=True, cwd=REPO_DIR)
     print("Building train/val/test splits...")
     dataset = "corners" if skip_screen else "both"

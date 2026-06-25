@@ -89,28 +89,38 @@ def _is_fullframe_polygon(pts: list[list[float]]) -> bool:
     )
 
 
-def _build_image_index() -> dict[str, Path]:
+def _build_image_index(extra_roots: list[Path] | None = None) -> dict[str, Path]:
     """Map flat filename (e.g. '2023_05_18_7d362338.jpg') -> full path."""
     index: dict[str, Path] = {}
-    for root in RAW_ROOTS:
+
+    def _add_flat(root: Path) -> None:
         if not root.is_dir():
-            continue
+            return
         for p in root.glob("*.jpg"):
             index[p.name] = p
         for p in root.glob("*.jpeg"):
             index[p.name] = p
-    for root in RAW_ROOTS_RECURSIVE:
+
+    def _add_recursive(root: Path) -> None:
         if not root.is_dir():
-            continue
+            return
         for p in root.rglob("*.jpg"):
             index[p.name] = p
         for p in root.rglob("*.jpeg"):
             index[p.name] = p
-    if RAW_BATCHES_ROOT.is_dir():
-        for p in RAW_BATCHES_ROOT.rglob("*.jpg"):
-            index[p.name] = p
-        for p in RAW_BATCHES_ROOT.rglob("*.jpeg"):
-            index[p.name] = p
+
+    for root in RAW_ROOTS:
+        _add_flat(root)
+    for root in RAW_ROOTS_RECURSIVE:
+        _add_recursive(root)
+    _add_recursive(RAW_BATCHES_ROOT)
+
+    # Extra roots passed via --extra-image-roots (e.g. DRIVE_SCREEN_DIR on Colab).
+    # These contain images downloaded by convert_labels_ls_to_quality_gate.py and
+    # may include good_front/partial images that have corner polygon annotations.
+    for root in (extra_roots or []):
+        _add_flat(root)
+
     return index
 
 
@@ -429,14 +439,22 @@ def main() -> int:
     parser.add_argument("--no-screen", dest="screen", action="store_false")
     parser.add_argument("--no-id-type", dest="id_type", action="store_false")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--extra-image-roots", type=Path, nargs="*", default=[],
+        metavar="DIR",
+        help="Extra flat image directories to include in the image index "
+             "(e.g. Drive screen_images cache on Colab).",
+    )
     args = parser.parse_args()
 
     if not args.export.is_file():
         print(f"Export not found: {args.export}", file=sys.stderr)
         return 1
 
-    print(f"Building image index from {len(RAW_ROOTS) + len(RAW_ROOTS_RECURSIVE)} root(s)...")
-    image_index = _build_image_index()
+    extra = [p for p in (args.extra_image_roots or []) if p.is_dir()]
+    total_roots = len(RAW_ROOTS) + len(RAW_ROOTS_RECURSIVE) + len(extra)
+    print(f"Building image index from {total_roots} root(s)...")
+    image_index = _build_image_index(extra_roots=extra)
     print(f"  {len(image_index)} images indexed")
 
     tasks = _parse_tasks(args.export)
