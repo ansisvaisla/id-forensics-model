@@ -33,9 +33,10 @@ _REJECT_INDICES = (0, 1, 2, 3, 4)   # screen, printout, selfie, back, garbage
 _ACCEPT_INDICES = (5, 6, 7)          # good_front, partial, blurry
 
 # Reject if the combined probability of all 5 reject classes exceeds this.
-# At 0.35 the model must be fairly confident an image is legitimate to pass.
+# Lowered to 0.25 because the retrained model pushes screen probability lower
+# on hard cases (screen-as-partial/blurry) — a stricter threshold recaptures them.
 # Tune upward (more permissive) or downward (stricter) as needed.
-_REJECT_THRESHOLD = 0.35
+_REJECT_THRESHOLD = 0.25
 
 _screen_model = None
 
