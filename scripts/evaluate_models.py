@@ -68,7 +68,10 @@ STAGE4_CLASSES = (
     "legacy", "maisha", "huduma", "passport",
     "driving_licence", "foreign_document", "unknown_id",
 )
-STAGE2_CLASSES = ("screen", "printout", "live")
+STAGE2_CLASSES = (
+    "screen", "printout", "selfie", "back",
+    "garbage", "good_front", "partial", "blurry",
+)
 _NUM_STAGE2 = len(STAGE2_CLASSES)
 
 THUMB = 280
@@ -423,6 +426,8 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
     confidences: list[float] = []
     correct_flags: list[bool] = []
 
+    prob_fields = [f"{c}_prob" for c in STAGE2_CLASSES]
+
     for img_path in sorted(img_dir.glob("*.jpg")):
         lbl_path = lbl_dir / f"{img_path.stem}.txt"
         if not lbl_path.is_file():
@@ -431,6 +436,8 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
         if true_int >= _NUM_STAGE2:
             continue
         img = cv2.imread(str(img_path))
+        if img is None:
+            continue
         tensor = transform(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).unsqueeze(0)
         with torch.no_grad():
             probs = F.softmax(model(tensor), dim=1)[0]
@@ -439,21 +446,17 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
         pred_lbl = STAGE2_CLASSES[pred_int]
         conf = float(probs[pred_int])
         correct = true_lbl == pred_lbl
-        rows.append({
-            "stem": img_path.stem,
-            "truth": true_lbl,
-            "pred": pred_lbl,
-            "screen_prob": round(float(probs[0]), 4),
-            "printout_prob": round(float(probs[1]), 4),
-            "live_prob": round(float(probs[2]), 4),
-            "confidence": round(conf, 4),
-        })
+
+        row: dict = {"stem": img_path.stem, "truth": true_lbl, "pred": pred_lbl, "confidence": round(conf, 4)}
+        for i, field in enumerate(prob_fields):
+            row[field] = round(float(probs[i]), 4)
+        rows.append(row)
         y_true.append(true_lbl)
         y_pred.append(pred_lbl)
         confidences.append(conf)
         correct_flags.append(correct)
 
-        tag = f"T:{true_lbl} P:{pred_lbl} s={probs[0]:.2f} pr={probs[1]:.2f}"
+        tag = f"T:{true_lbl[:8]} P:{pred_lbl[:8]} {conf:.2f}"
         thumb = _bordered(img, correct, tag)
         subfolder = "correct" if correct else "wrong"
         cv2.imwrite(str(run_dir / "viz" / subfolder / f"{img_path.stem}.jpg"), thumb)
@@ -463,14 +466,17 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
 
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     with open(run_dir / "predictions.csv", "w", newline="", encoding="utf-8") as f:
-        w2 = csv.DictWriter(
-            f,
-            fieldnames=["stem", "truth", "pred", "screen_prob", "printout_prob", "live_prob", "confidence"],
-        )
-        w2.writeheader()
-        w2.writerows(rows)
+        writer = csv.DictWriter(f, fieldnames=["stem", "truth", "pred", "confidence"] + prob_fields)
+        writer.writeheader()
+        writer.writerows(rows)
 
     _save_confusion_matrix(y_true, y_pred, STAGE2_CLASSES, run_dir / "confusion_matrix.png")
+    _save_confusion_matrix(
+        [t for t in y_true if t in {"screen", "printout", "selfie", "back", "garbage"}],
+        [p for t, p in zip(y_true, y_pred) if t in {"screen", "printout", "selfie", "back", "garbage"}],
+        ("screen", "printout", "selfie", "back", "garbage"),
+        run_dir / "confusion_matrix_rejects.png",
+    )
     _save_confidence_hist(confidences, correct_flags, run_dir / "confidence_hist.png")
 
     report = _classification_report_text(metrics)
