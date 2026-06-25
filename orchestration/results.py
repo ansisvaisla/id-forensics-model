@@ -16,6 +16,10 @@ class IdCropResult:
     # Bounding box in the *original* image as (x%, y%, w%, h%) — 0-100 percentages.
     # Used by batch_label.py to emit rectanglelabels in Label Studio JSON.
     bbox_orig: Optional[tuple[float, float, float, float]] = None
+    # Actual 4 corner points as [[x%, y%], ...] in 0-100 percentages.
+    # Populated whenever YOLO detects 4 keypoints, regardless of warp success.
+    # Used by batch_label.py to emit polygonlabels → feeds convert_labels_to_yolo.py.
+    corners_pct: Optional[list[list[float]]] = None
 
 
 @dataclass

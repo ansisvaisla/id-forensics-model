@@ -216,6 +216,14 @@ def _corners_to_bbox_pct(
     )
 
 
+def _corners_to_pct(corners: np.ndarray, img_w: int, img_h: int) -> list[list[float]]:
+    """Convert 4×2 pixel corner array to [[x%, y%], ...] in 0-100 range."""
+    return [
+        [round(float(x) / img_w * 100.0, 2), round(float(y) / img_h * 100.0, 2)]
+        for x, y in corners
+    ]
+
+
 # ── Main entry point ─────────────────────────────────────────────────────────
 
 def _ml_bbox_crop(image: np.ndarray, conf: float, corners: np.ndarray) -> Optional[np.ndarray]:
@@ -265,6 +273,7 @@ def run(image: np.ndarray) -> IdCropResult:
         )
 
     bbox_pct = _corners_to_bbox_pct(ml_corners, w, h)
+    corners_pct = _corners_to_pct(ml_corners, w, h)
 
     # Coverage check — card fills the frame, no crop needed
     if _card_fills_frame(ml_corners, w, h):
@@ -277,6 +286,7 @@ def run(image: np.ndarray) -> IdCropResult:
             label="full_frame_id" if ok else "invalid_crop",
             confidence=conf,
             bbox_orig=(0.0, 0.0, 100.0, 100.0),
+            corners_pct=corners_pct,
         )
 
     # ── Attempt perspective warp if corners are trustworthy ───────────────────
@@ -297,6 +307,7 @@ def run(image: np.ndarray) -> IdCropResult:
             )
             if warp_result is not None:
                 warp_result.bbox_orig = bbox_pct
+                warp_result.corners_pct = corners_pct
                 return warp_result
 
     # ── Bbox crop fallback ────────────────────────────────────────────────────
@@ -314,6 +325,7 @@ def run(image: np.ndarray) -> IdCropResult:
                 label="bbox_crop",
                 confidence=conf,
                 bbox_orig=bbox_pct,
+                corners_pct=corners_pct,
             )
 
     # ── Nothing worked ────────────────────────────────────────────────────────
@@ -323,4 +335,5 @@ def run(image: np.ndarray) -> IdCropResult:
         corners_detected=4,
         label="invalid_crop",
         confidence=conf,
+        corners_pct=corners_pct,
     )

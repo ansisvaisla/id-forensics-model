@@ -120,6 +120,47 @@ def _flat_name(file_upload: str) -> str:
     return parts[1] if len(parts) == 2 else file_upload
 
 
+def _flat_name_from_task(task: dict) -> str:
+    """Return the flat image filename for a task regardless of import mode.
+
+    Handles three source types:
+    - file_upload tasks  (directly uploaded to Label Studio)
+    - s3:// URI tasks    (batch_label.py --s3-uris mode)
+    - presigned HTTPS tasks (batch_label.py default mode)
+    """
+    # Priority 1: file_upload field (direct uploads)
+    file_upload = task.get("file_upload", "") or ""
+    if file_upload:
+        return _flat_name(file_upload)
+
+    # Priority 2: parse from image URI
+    image_uri: str = task.get("data", {}).get("image", "") or ""
+    if image_uri.startswith("s3://"):
+        # s3://bucket/id-doc-front/YYYY/MM/DD/hash.jpg
+        key = image_uri.split("/", 3)[-1]  # strip s3://bucket/
+    elif image_uri.startswith("http"):
+        from urllib.parse import urlparse
+        parsed = urlparse(image_uri)
+        key = parsed.path.lstrip("/")
+        # For path-style URLs: /bucket/key → strip bucket prefix if present
+        if key.startswith("sf-zenka"):
+            key = key.split("/", 1)[-1]
+    else:
+        return ""
+
+    # key is now like "id-doc-front/YYYY/MM/DD/hash.jpg"
+    # Reconstruct flat filename: "YYYY_MM_DD_hash.jpg"
+    parts = key.split("/")
+    if len(parts) >= 4 and parts[-4].isdigit():
+        year, month, day, fname = parts[-4], parts[-3], parts[-2], parts[-1]
+        stem = Path(fname).stem
+        ext = Path(fname).suffix or ".jpg"
+        return f"{year}_{month}_{day}_{stem}{ext}"
+
+    # Fallback: use just the filename component
+    return Path(key).name
+
+
 def _parse_tasks(export_path: Path) -> list[dict]:
     return json.loads(export_path.read_text(encoding="utf-8"))
 
@@ -172,7 +213,7 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
             skipped_fullframe += 1
             continue
 
-        flat = _flat_name(task.get("file_upload", ""))
+        flat = _flat_name_from_task(task)
         img_path = image_index.get(flat)
         if img_path is None:
             skipped_no_image += 1
@@ -240,7 +281,7 @@ def convert_screen(tasks: list[dict], image_index: dict[str, Path], dry_run: boo
             skipped += 1
             continue
 
-        flat = _flat_name(task.get("file_upload", ""))
+        flat = _flat_name_from_task(task)
         img_path = image_index.get(flat)
         if img_path is None:
             skipped += 1
@@ -312,7 +353,7 @@ def convert_id_type(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
             skipped_unknown_type += 1
             continue
 
-        flat = _flat_name(task.get("file_upload", ""))
+        flat = _flat_name_from_task(task)
         img_path = image_index.get(flat)
         if img_path is None:
             skipped_no_image += 1

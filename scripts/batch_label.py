@@ -278,21 +278,34 @@ def _to_ls_predictions(result) -> list[dict]:
              "value": {"choices": [id_type_label]}}
         )
 
-    # Bounding box only for live images where Stage 1 detected the card
-    if quality in _LIVE_QUALITIES and result.crop is not None and result.crop.bbox_orig is not None:
-        x, y, w, h = result.crop.bbox_orig
-        annotation_results.append({
-            "from_name": "bbox",
-            "to_name": "image",
-            "type": "rectanglelabels",
-            "value": {
-                "x": x,
-                "y": y,
-                "width": w,
-                "height": h,
-                "rectanglelabels": ["id_card"],
-            },
-        })
+    # Corner polygon for live images where Stage 1 detected 4 keypoints.
+    # Stored as polygonlabels so convert_labels_to_yolo.py can read them directly.
+    if quality in _LIVE_QUALITIES and result.crop is not None:
+        if result.crop.corners_pct is not None and len(result.crop.corners_pct) == 4:
+            annotation_results.append({
+                "from_name": "corners",
+                "to_name": "image",
+                "type": "polygonlabels",
+                "value": {
+                    "points": result.crop.corners_pct,
+                    "polygonlabels": ["id_card"],
+                },
+            })
+        elif result.crop.bbox_orig is not None:
+            # Fallback: no corner keypoints available, emit bounding box
+            x, y, w, h = result.crop.bbox_orig
+            annotation_results.append({
+                "from_name": "bbox",
+                "to_name": "image",
+                "type": "rectanglelabels",
+                "value": {
+                    "x": x,
+                    "y": y,
+                    "width": w,
+                    "height": h,
+                    "rectanglelabels": ["id_card"],
+                },
+            })
 
     return [{
         "model_version": _MODEL_VERSION,
