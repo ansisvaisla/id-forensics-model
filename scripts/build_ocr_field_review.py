@@ -1,9 +1,9 @@
 """Build a Label Studio import JSON for OCR field rectangle review.
 
 The review UI stays on the original full image because AWS Rekognition OCR boxes
-and existing card-corner labels are both in full-image coordinates. Field boxes
-are prefilled by projecting the current canonical templates back onto the full
-image through the card-corner homography.
+and existing card-corner labels are both in full-image coordinates. By default,
+card corners are stored in task data only, not drawn on the canvas, so large card
+polygons do not steal clicks while reviewers draw field rectangles.
 
 Usage:
     python scripts/build_ocr_field_review.py \
@@ -166,6 +166,8 @@ def _build_task(
     task: dict[str, Any],
     ocr_row: dict[str, Any],
     include_ocr_boxes: int,
+    prefill_field_boxes: bool,
+    show_card_corners: bool,
 ) -> dict[str, Any] | None:
     quality = _choice(task, "quality")
     id_type = _choice(task, "id_type")
@@ -178,15 +180,23 @@ def _build_task(
     copied_results = [
         _copy_prediction_result(result)
         for result in annotation_results
-        if result.get("from_name") in {"quality", "id_type", "corners"}
+        if result.get("from_name") in {"quality", "id_type"}
     ]
-    copied_results.extend(_template_field_results(id_type, corners))
+    if show_card_corners:
+        copied_results.extend(
+            _copy_prediction_result(result)
+            for result in annotation_results
+            if result.get("from_name") == "corners"
+        )
+    if prefill_field_boxes:
+        copied_results.extend(_template_field_results(id_type, corners))
     copied_results.extend(_ocr_word_results(response, include_ocr_boxes))
 
     s3_key = _s3_key_from_task(task)
     data = dict(task.get("data") or {})
     data.update({
         "s3_key": s3_key,
+        "corners_pct": corners,
         "quality_hint": quality,
         "id_type_hint": id_type,
         "ocr_text": _ocr_preview(response),
@@ -219,6 +229,16 @@ def main() -> int:
         default=0,
         help="Add first N OCR word boxes as visual context. 0 keeps UI cleaner.",
     )
+    parser.add_argument(
+        "--prefill-field-boxes",
+        action="store_true",
+        help="Draw rough field boxes from current templates. Off by default to avoid click conflicts.",
+    )
+    parser.add_argument(
+        "--show-card-corners",
+        action="store_true",
+        help="Draw card corner polygon. Off by default because it steals clicks during field labeling.",
+    )
     args = parser.parse_args()
 
     tasks = _load_tasks(args.label_export)
@@ -233,7 +253,13 @@ def main() -> int:
         if not row:
             skipped += 1
             continue
-        review_task = _build_task(task, row, args.include_ocr_boxes)
+        review_task = _build_task(
+            task,
+            row,
+            include_ocr_boxes=args.include_ocr_boxes,
+            prefill_field_boxes=args.prefill_field_boxes,
+            show_card_corners=args.show_card_corners,
+        )
         if review_task is None:
             skipped += 1
             continue

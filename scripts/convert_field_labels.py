@@ -99,6 +99,9 @@ def _corners_norm(task: dict[str, Any]) -> list[list[float]] | None:
             points = result.get("value", {}).get("points") or []
             if len(points) == 4:
                 return [[float(x) / 100.0, float(y) / 100.0] for x, y in points]
+    data_corners = (task.get("data") or {}).get("corners_pct") or []
+    if len(data_corners) == 4:
+        return [[float(x) / 100.0, float(y) / 100.0] for x, y in data_corners]
     return None
 
 

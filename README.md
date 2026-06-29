@@ -197,6 +197,12 @@ python scripts/build_ocr_field_review.py \
 Label field **values** on the full image with horizontal rectangles. After export,
 convert full-image field boxes and OCR boxes to canonical cropped-ID coordinates:
 
+By default the field-review import does not draw the large card-corner polygon or
+rough template boxes on the canvas. Corners are stored in task data and used later
+by `convert_field_labels.py`, so reviewers can draw field rectangles without
+selecting the whole ID card by accident. Use `--prefill-field-boxes` only for
+experiments.
+
 ```bash
 python scripts/convert_field_labels.py \
   --label-export data/labels/ocr_field_review_export.json \
