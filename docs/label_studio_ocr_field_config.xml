@@ -1,0 +1,56 @@
+<View>
+  <Header value="Instructions"/>
+  <Text name="notes" value="$labeling_notes"/>
+  <Text name="hints" value="Quality: $quality_hint | ID type: $id_type_hint | S3: $s3_key"/>
+  <Header value="OCR text context"/>
+  <Text name="ocr_text" value="$ocr_text"/>
+
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="true"/>
+
+  <Header value="Quality"/>
+  <Choices name="quality" toName="image" choice="single">
+    <Choice value="good_front"/>
+    <Choice value="partial"/>
+    <Choice value="blurry"/>
+    <Choice value="screen"/>
+    <Choice value="printout"/>
+    <Choice value="selfie"/>
+    <Choice value="back"/>
+    <Choice value="garbage"/>
+  </Choices>
+
+  <Header value="ID Type"/>
+  <Choices name="id_type" toName="image" choice="single">
+    <Choice value="legacy"/>
+    <Choice value="maisha"/>
+    <Choice value="passport"/>
+    <Choice value="driving_licence"/>
+    <Choice value="foreign_document"/>
+    <Choice value="unknown_id"/>
+  </Choices>
+
+  <Header value="ID Card Corners"/>
+  <PolygonLabels name="corners" toName="image">
+    <Label value="id_card"/>
+  </PolygonLabels>
+
+  <Header value="OCR field values"/>
+  <RectangleLabels name="field" toName="image">
+    <Label value="id_number"/>
+    <Label value="serial_number"/>
+    <Label value="name"/>
+    <Label value="surname"/>
+    <Label value="sex"/>
+    <Label value="date_of_birth"/>
+    <Label value="date_of_issue"/>
+    <Label value="place_of_birth"/>
+    <Label value="nationality"/>
+    <Label value="mrz"/>
+    <Label value="ignore_unreadable"/>
+  </RectangleLabels>
+
+  <Header value="Optional OCR word boxes"/>
+  <RectangleLabels name="ocr_word" toName="image">
+    <Label value="ocr_word"/>
+  </RectangleLabels>
+</View>

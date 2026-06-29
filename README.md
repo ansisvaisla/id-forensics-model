@@ -184,6 +184,27 @@ After reviewing the CSV, add columns like `expected_id_number`,
 python scripts/evaluate_field_localization.py --input data/eval/ocr_audit_reviewed.csv
 ```
 
+For scalable field review, create a separate Label Studio project using
+`docs/label_studio_ocr_field_config.xml`, then generate the import JSON:
+
+```bash
+python scripts/build_ocr_field_review.py \
+  --label-export data/labels/label_studio_ocr_500.json \
+  --ocr-csv data/batches/aws_rekognition_detect_text.csv \
+  --out data/batches/ocr_field_review_500.json
+```
+
+Label field **values** on the full image with horizontal rectangles. After export,
+convert full-image field boxes and OCR boxes to canonical cropped-ID coordinates:
+
+```bash
+python scripts/convert_field_labels.py \
+  --label-export data/labels/ocr_field_review_export.json \
+  --ocr-csv data/batches/aws_rekognition_detect_text.csv \
+  --out data/eval/ocr_field_labels_canonical.csv \
+  --templates-out data/eval/ocr_field_templates.json
+```
+
 ---
 
 ## Evaluation
