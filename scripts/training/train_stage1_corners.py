@@ -1,4 +1,4 @@
-"""Train Stage 1 — YOLOv8-Pose corner keypoint detector.
+"""Train Stage 2 — YOLOv8-Pose corner keypoint detector.
 
 Trains a pose estimation model to predict 4 keypoints (card corners)
 rather than a rotated bounding box (OBB). This correctly handles
@@ -8,7 +8,7 @@ Usage:
     python scripts/training/train_stage1_corners.py
     python scripts/training/train_stage1_corners.py --model yolov8s-pose.pt --epochs 100
 
-Output: models/stage1_corners/  (weights/best.pt, weights/last.pt)
+Output: models/stage2_corners/  (weights/best.pt, weights/last.pt)
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_YAML = PROJECT_ROOT / "data" / "yolo" / "corners" / "data.yaml"
-OUTPUT_DIR = PROJECT_ROOT / "models" / "stage1_corners"
+OUTPUT_DIR = PROJECT_ROOT / "models" / "stage2_corners"
 
 
 def main() -> int:

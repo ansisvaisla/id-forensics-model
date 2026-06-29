@@ -1,4 +1,4 @@
-"""Crop id_type training images to the card bounding box for Stage 4.
+"""Crop id_type training images to the card bounding box for Stage 3.
 
 Strategy: use the ML model's bounding box (not corners/warp) to crop the card.
 The bounding box is much more reliable than corner precision — the model is good
@@ -8,8 +8,8 @@ Why not perspective warp:
   - Warp requires 4 precise corners → sensitive to small errors
   - Classical contour detection confuses the card boundary with the photo region
     or other inner rectangles, producing face crops
-  - EfficientNet (Stage 4) classifies well from a bounding-box crop at a mild angle
-  - Only Stage 5 (OCR) truly needs a flat, perspective-corrected image
+  - EfficientNet (Stage 3) classifies well from a bounding-box crop at a mild angle
+  - Only Stage 4 (OCR) truly needs a flat, perspective-corrected image
 
 Why bbox crop works:
   - ML bounding box encompasses the whole card reliably
@@ -36,7 +36,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "data" / "id_type" / "all"
 DST_DIR = PROJECT_ROOT / "data" / "id_type" / "all_deskewed"
-MODEL_PATH = PROJECT_ROOT / "models" / "stage1_corners" / "weights" / "best.pt"
+MODEL_PATH = PROJECT_ROOT / "models" / "stage2_corners" / "weights" / "best.pt"
+LEGACY_MODEL_PATH = PROJECT_ROOT / "models" / "stage1_corners" / "weights" / "best.pt"
 
 CLASSES = (
     "legacy", "maisha", "huduma", "passport",
@@ -57,8 +58,13 @@ def _get_model():
     global _ml_model
     if _ml_model is None:
         from ultralytics import YOLO  # type: ignore
-        _ml_model = YOLO(str(MODEL_PATH))
+        _ml_model = YOLO(str(_model_path()))
     return _ml_model
+
+
+def _model_path() -> Path:
+    """Prefer new Stage 2 corner path, but keep old Stage 1 artifacts usable."""
+    return MODEL_PATH if MODEL_PATH.is_file() else LEGACY_MODEL_PATH
 
 
 def _bbox_crop(img, x1: float, y1: float, x2: float, y2: float,
@@ -138,7 +144,7 @@ def _is_blank(img) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Crop id_type images to card bbox for Stage 4 training"
+        description="Crop id_type images to card bbox for Stage 3 training"
     )
     parser.add_argument("--force", action="store_true",
                         help="Re-process images even if destination already exists")
@@ -155,13 +161,14 @@ def main() -> int:
 
     import cv2  # type: ignore
 
-    if not MODEL_PATH.is_file():
+    model_path = _model_path()
+    if not model_path.is_file():
         if args.skip_missing_model:
-            print(f"WARNING: model not found at {MODEL_PATH}. Using trim fallback.")
+            print(f"WARNING: model not found at {model_path}. Using trim fallback.")
             use_model = False
         else:
-            print(f"ERROR: model not found: {MODEL_PATH}\n"
-                  "Download: .\\scripts\\sync_from_cloud.ps1 -Stage stage1\n"
+            print(f"ERROR: model not found: {model_path}\n"
+                  "Download/restore Stage 2 corner weights first.\n"
                   "Or pass --skip-missing-model.", file=sys.stderr)
             return 1
     else:

@@ -1,4 +1,4 @@
-"""Tests for Stage 7 — Orchestration (shadow mode, no real models needed)."""
+"""Tests for orchestration shadow mode (no real models needed)."""
 from __future__ import annotations
 
 import io

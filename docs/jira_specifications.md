@@ -89,7 +89,7 @@ Train a model to examine bounding boxes from AWS OCR output. Evaluate whether th
 
 ---
 
-### Stage 5 — Orchestration & Tolerant Decision Matrix
+### Decision Layer — Orchestration & Tolerant Decision Matrix
 
 To protect top-line conversion and satisfy business risk tolerances, the pipeline avoids aggressive automatic rejections. Instead it uses asynchronous shadow mode and risk-routing logic.
 

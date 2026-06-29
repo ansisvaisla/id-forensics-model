@@ -7,7 +7,7 @@ from typing import Optional
 
 @dataclass
 class IdCropResult:
-    """Output of Stage 1 — ID Crop."""
+    """Output of Stage 2 — ID Crop And Corners."""
     cropped_image: Optional[object]  # numpy ndarray or None
     is_partial_document: bool
     corners_detected: int  # 0–4
@@ -37,7 +37,7 @@ class QualityGateResult:
 
 @dataclass
 class PresentationAttackResult:
-    """Output of Stage 2 — Presentation Attack Detection."""
+    """Deprecated compatibility output for the old presentation-attack stage."""
     is_screen_replay: bool
     is_printout: bool
     screen_score: float   # probability 0–1; higher = more likely screen
@@ -47,7 +47,7 @@ class PresentationAttackResult:
 
 @dataclass
 class TamperingResult:
-    """Output of Stage 3 — Injection & Digital Tampering Detection."""
+    """Experimental output for injection and digital tampering heuristics."""
     is_tampered: bool
     ela_score: float      # normalised ELA residual energy 0–1
     exif_suspicious: bool  # True if EXIF lacks expected camera sensor fields
@@ -56,25 +56,28 @@ class TamperingResult:
 
 @dataclass
 class IdTypeResult:
-    """Output of Stage 4 — ID Type Classification."""
+    """Output of Stage 3 — ID Type Classification."""
     id_type: str  # legacy | maisha | huduma | passport | driving_licence | foreign_document | unknown_id | unknown
     confidence: float
 
 
 @dataclass
 class ExtractedFields:
-    """Structured fields parsed from OCR output (Stage 5)."""
+    """Structured fields parsed from OCR output (Stage 4)."""
     name: Optional[str] = None
     surname: Optional[str] = None
     sex: Optional[str] = None
     nationality: Optional[str] = None
     id_number: Optional[str] = None
     date_of_birth: Optional[str] = None
+    date_of_issue: Optional[str] = None
+    place_of_birth: Optional[str] = None
+    serial_number: Optional[str] = None
 
 
 @dataclass
 class FieldExtractResult:
-    """Output of Stage 5 — Field Text Recognizer."""
+    """Output of Stage 4 — Field Localization And OCR."""
     extracted_fields: ExtractedFields
     field_extraction_confidence: float  # average Textract confidence 0–1
     label: str  # 'extracted' | 'partial' | 'failed'
@@ -82,7 +85,7 @@ class FieldExtractResult:
 
 @dataclass
 class PipelineResult:
-    """Aggregated output of all pipeline stages (Stage 7 — Orchestration)."""
+    """Aggregated output of all pipeline stages and decision metadata."""
     # Stage flags
     is_partial_document: bool = False
     is_screen_replay: bool = False

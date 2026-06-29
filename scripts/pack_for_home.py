@@ -40,6 +40,10 @@ DATA_PATHS = [
 ]
 
 MODEL_GLOBS = [
+    "models/stage1_quality_gate/best.pt",
+    "models/stage2_corners/weights/best.pt",
+    "models/stage3_id_type/best.pt",
+    # Legacy artifact paths, included if present.
     "models/stage1_corners/weights/best.pt",
     "models/stage2_screen/best.pt",
     "models/stage4_id_type/best.pt",
@@ -75,12 +79,12 @@ def main() -> int:
     parser.add_argument(
         "--include-models",
         action="store_true",
-        help="Also pack models/ weights (stage1, stage2, stage4)",
+        help="Also pack models/ weights (stage1, stage2, stage3, plus legacy paths)",
     )
     parser.add_argument(
-        "--include-stage1",
+        "--include-stage2-corners",
         action="store_true",
-        help="Pack stage1 model weights (needed for deskew_id_type_images.py in Colab)",
+        help="Pack Stage 2 corner weights (needed for deskew_id_type_images.py in Colab)",
     )
     args = parser.parse_args()
 
@@ -100,8 +104,11 @@ def main() -> int:
     print(f"Packing -> {args.out}")
 
     globs_to_pack = list(MODEL_GLOBS) if args.include_models else []
-    if args.include_stage1 and not args.include_models:
-        globs_to_pack = ["models/stage1_corners/weights/best.pt"]
+    if args.include_stage2_corners and not args.include_models:
+        globs_to_pack = [
+            "models/stage2_corners/weights/best.pt",
+            "models/stage1_corners/weights/best.pt",
+        ]
 
     with zipfile.ZipFile(args.out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for p in DATA_PATHS:

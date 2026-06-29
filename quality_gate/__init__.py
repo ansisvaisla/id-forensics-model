@@ -1,4 +1,4 @@
-"""Quality Gate — runs first on every raw image before any cropping.
+"""Stage 1 — Quality Gate.
 
 8-class EfficientNet-B0 classifier:
   0  screen       — screen replay attack (phone/monitor)
@@ -25,6 +25,9 @@ import numpy as np
 from orchestration.results import QualityGateResult
 
 MODEL_PATH = (
+    Path(__file__).resolve().parents[1] / "models" / "stage1_quality_gate" / "best.pt"
+)
+LEGACY_MODEL_PATH = (
     Path(__file__).resolve().parents[1] / "models" / "stage2_screen" / "best.pt"
 )
 
@@ -53,7 +56,7 @@ def _load_model():
 
     model = efficientnet_b0(weights=None)
     model.classifier[1] = nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
-    state = torch.load(str(MODEL_PATH), map_location="cpu", weights_only=True)
+    state = torch.load(str(_model_path()), map_location="cpu", weights_only=True)
     model.load_state_dict(state)
     model.eval()
     return model
@@ -64,6 +67,11 @@ def _get_model():
     if _model is None:
         _model = _load_model()
     return _model
+
+
+def _model_path() -> Path:
+    """Prefer new Stage 1 path, but keep old Stage 2 artifacts usable."""
+    return MODEL_PATH if MODEL_PATH.is_file() else LEGACY_MODEL_PATH
 
 
 def _preprocess(image: np.ndarray) -> "torch.Tensor":
@@ -90,7 +98,7 @@ def run(image: np.ndarray) -> QualityGateResult:
         QualityGateResult. is_live=True means the image should proceed to id_crop.
         Returns is_live=True (permissive fallback) when the model is not yet trained.
     """
-    if not MODEL_PATH.is_file():
+    if not _model_path().is_file():
         return QualityGateResult(
             label="good_front",
             confidence=0.0,

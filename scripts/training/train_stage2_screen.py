@@ -1,4 +1,4 @@
-"""Train Stage 2 — Quality Gate classifier (EfficientNet-B0).
+"""Train Stage 1 — Quality Gate classifier (EfficientNet-B0).
 
 8 classes: screen (0), printout (1), selfie (2), back (3), garbage (4),
            good_front (5), partial (6), blurry (7).
@@ -7,7 +7,7 @@ Usage:
     python scripts/training/train_stage2_screen.py
     python scripts/training/train_stage2_screen.py --epochs 40 --device cuda
 
-Output: models/stage2_screen/best.pt
+Output: models/stage1_quality_gate/best.pt
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data" / "yolo" / "screen"
-OUTPUT_DIR = PROJECT_ROOT / "models" / "stage2_screen"
+OUTPUT_DIR = PROJECT_ROOT / "models" / "stage1_quality_gate"
 
 _IMG_SIZE = 224
 _BATCH = 32
@@ -88,7 +88,7 @@ def _build_dataset(split: str, augment: bool):
             drive_marker = "/content/drive"
             if drive_marker not in str(first):
                 return  # already local — nothing to do
-            local_dir = Path(tempfile.mkdtemp(prefix="stage2_imgs_"))
+            local_dir = Path(tempfile.mkdtemp(prefix="stage1_quality_imgs_"))
             print(f"  Copying {len(self.samples)} images to local disk ({local_dir}) ...")
             new_samples = []
             for img_path, label in self.samples:
@@ -150,7 +150,7 @@ def _compute_class_weights(samples: list[tuple[Path, int]], device) -> "torch.Te
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Train Stage 2 presentation attack classifier")
+    parser = argparse.ArgumentParser(description="Train Stage 1 quality gate classifier")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch", type=int, default=_BATCH)
     parser.add_argument("--lr", type=float, default=_LR)

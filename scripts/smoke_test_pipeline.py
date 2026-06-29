@@ -9,7 +9,7 @@ screen images     → is_screen_replay=True
 good_front images → is_screen_replay=False, is_partial_document=False
 garbage images    → is_partial_document=True OR label contains a non-document hint
 
-No AWS credentials required — Stage 5 (Textract) will gracefully error-catch
+No AWS credentials required — Stage 4 OCR will gracefully skip/fail open
 without blocking the smoke test.
 
 Usage

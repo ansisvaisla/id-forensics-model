@@ -7,20 +7,20 @@ Produces per-run output under data/eval/<stage>/<YYYYMMDD_HHMMSS>/:
     viz/                — annotated image thumbnails
         correct/        — green-bordered correct predictions
         wrong/          — red-bordered misclassifications
-    confusion_matrix.png   (stage2, stage4 only)
-    confidence_hist.png    (stage2, stage4 only)
-    per_class_grid.png     (stage4 only — sample crops per class)
+    confusion_matrix.png   (stage1, stage3 only)
+    confidence_hist.png    (stage1, stage3 only)
+    per_class_grid.png     (stage3 only — sample crops per class)
 
 Usage:
     python scripts/evaluate_models.py                      # all stages on val split
-    python scripts/evaluate_models.py --stage stage4
-    python scripts/evaluate_models.py --stage stage2 --split test
-    python scripts/evaluate_models.py --stage stage1 --max-viz 30
+    python scripts/evaluate_models.py --stage stage1 --split test
+    python scripts/evaluate_models.py --stage stage2 --max-viz 30
+    python scripts/evaluate_models.py --stage stage3
 
 Stages:
-    stage1  — YOLOv8 Pose corner detection (key-point error in pixels)
-    stage2  — EfficientNet-B0 screen/live classifier
-    stage4  — EfficientNet-B0 ID type classifier (7 classes)
+    stage1  — EfficientNet-B0 quality gate classifier
+    stage2  — YOLOv8 Pose corner detection (key-point error in pixels)
+    stage3  — EfficientNet-B0 ID type classifier (7 classes)
 """
 from __future__ import annotations
 
@@ -55,28 +55,39 @@ def get_eval_root() -> Path:
     return _EVAL_ROOT
 
 # Model paths
-STAGE1_MODEL = PROJECT_ROOT / "models" / "stage1_corners" / "weights" / "best.pt"
-STAGE2_MODEL = PROJECT_ROOT / "models" / "stage2_screen" / "best.pt"
-STAGE4_MODEL = PROJECT_ROOT / "models" / "stage4_id_type" / "best.pt"
+STAGE1_MODEL = PROJECT_ROOT / "models" / "stage1_quality_gate" / "best.pt"
+STAGE1_LEGACY_MODEL = PROJECT_ROOT / "models" / "stage2_screen" / "best.pt"
+STAGE2_MODEL = PROJECT_ROOT / "models" / "stage2_corners" / "weights" / "best.pt"
+STAGE2_LEGACY_MODEL = PROJECT_ROOT / "models" / "stage1_corners" / "weights" / "best.pt"
+STAGE3_MODEL = PROJECT_ROOT / "models" / "stage3_id_type" / "best.pt"
+STAGE3_LEGACY_MODEL = PROJECT_ROOT / "models" / "stage4_id_type" / "best.pt"
 
 # Data roots
-STAGE1_DATA = PROJECT_ROOT / "data" / "yolo" / "corners"
-STAGE2_DATA = PROJECT_ROOT / "data" / "yolo" / "screen"
-STAGE4_DATA = PROJECT_ROOT / "data" / "id_type"
+STAGE1_DATA = PROJECT_ROOT / "data" / "yolo" / "screen"
+STAGE2_DATA = PROJECT_ROOT / "data" / "yolo" / "corners"
+STAGE3_DATA = PROJECT_ROOT / "data" / "id_type"
 
-STAGE4_CLASSES = (
+STAGE3_CLASSES = (
     "legacy", "maisha", "huduma", "passport",
     "driving_licence", "foreign_document", "unknown_id",
 )
-STAGE2_CLASSES = (
+STAGE1_CLASSES = (
     "screen", "printout", "selfie", "back",
     "garbage", "good_front", "partial", "blurry",
 )
-_NUM_STAGE2 = len(STAGE2_CLASSES)
+_NUM_STAGE1 = len(STAGE1_CLASSES)
 
 THUMB = 280
 BORDER = 6
 FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+
+def _first_existing(*paths: Path) -> Path:
+    """Return first existing path, or the preferred path if none exist."""
+    for path in paths:
+        if path.is_file():
+            return path
+    return paths[0]
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -192,7 +203,7 @@ def _save_per_class_grid(
     n_per_class: int = 6,
 ) -> None:
     """Save a grid with up to n_per_class sample crops per ID type class."""
-    classes = [c for c in STAGE4_CLASSES if c in class_samples and class_samples[c]]
+    classes = [c for c in STAGE3_CLASSES if c in class_samples and class_samples[c]]
     if not classes:
         return
 
@@ -216,19 +227,20 @@ def _save_per_class_grid(
     cv2.imwrite(str(out_path), canvas)
 
 
-# ── Stage 1 — Corners ─────────────────────────────────────────────────────────
+# ── Stage 2 — Corners ─────────────────────────────────────────────────────────
 
-def evaluate_stage1(split: str = "val", max_viz: int = 20, tolerance_pct: float = 0.05) -> dict:
-    if not STAGE1_MODEL.is_file():
-        print(f"Stage 1 model not found: {STAGE1_MODEL}", file=sys.stderr)
+def evaluate_stage2(split: str = "val", max_viz: int = 20, tolerance_pct: float = 0.05) -> dict:
+    model_path = _first_existing(STAGE2_MODEL, STAGE2_LEGACY_MODEL)
+    if not model_path.is_file():
+        print(f"Stage 2 model not found: {model_path}", file=sys.stderr)
         return {}
 
     from ultralytics import YOLO  # type: ignore
-    model = YOLO(str(STAGE1_MODEL))
+    model = YOLO(str(model_path))
 
-    img_dir = STAGE1_DATA / "images" / split
-    lbl_dir = STAGE1_DATA / "labels" / split
-    run_dir = _make_run_dir("stage1")
+    img_dir = STAGE2_DATA / "images" / split
+    lbl_dir = STAGE2_DATA / "labels" / split
+    run_dir = _make_run_dir("stage2")
 
     distances: list[float] = []
     no_detection = 0
@@ -304,7 +316,7 @@ def evaluate_stage1(split: str = "val", max_viz: int = 20, tolerance_pct: float 
             by2 = min(img.shape[0], int(pred_pts[:, 1].max()))
             cv2.rectangle(vis, (bx1, by1), (bx2, by2), (255, 140, 0), 2)
 
-            # Pipeline crop (what actually goes to Stage 4)
+            # Pipeline crop (what actually goes to Stage 3)
             sys.path.insert(0, str(PROJECT_ROOT))
             try:
                 import id_crop as _id_crop_mod
@@ -352,9 +364,9 @@ def evaluate_stage1(split: str = "val", max_viz: int = 20, tolerance_pct: float 
     pct_within = within_tol / total * 100 if total else 0.0
 
     metrics = {
-        "stage": "stage1",
+        "stage": "stage2",
         "split": split,
-        "model": str(STAGE1_MODEL),
+        "model": str(model_path),
         "total": total,
         "detected": n,
         "no_detection": no_detection,
@@ -373,17 +385,17 @@ def evaluate_stage1(split: str = "val", max_viz: int = 20, tolerance_pct: float 
         w2.writeheader()
         w2.writerows(rows)
 
-    report = _stage1_report(metrics)
+    report = _stage2_report(metrics)
     (run_dir / "report.txt").write_text(report, encoding="utf-8")
     print(report)
     print(f"\nOutputs: {run_dir}")
     return metrics
 
 
-def _stage1_report(m: dict) -> str:
+def _stage2_report(m: dict) -> str:
     lines = [
         "=" * 55,
-        f"  Stage 1 — Corner Detector  [{m['split']} split]",
+        f"  Stage 2 — Corner Detector  [{m['split']} split]",
         "=" * 55,
         f"  Total images     : {m['total']}",
         f"  Detected         : {m['detected']}  ({m['detection_rate_pct']:.1f}%)",
@@ -396,29 +408,30 @@ def _stage1_report(m: dict) -> str:
     return "\n".join(lines)
 
 
-# ── Stage 2 — Screen classifier ───────────────────────────────────────────────
+# ── Stage 1 — Quality Gate classifier ─────────────────────────────────────────
 
-def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
+def evaluate_stage1(split: str = "val", threshold: float = 0.5) -> dict:
     import torch
     import torch.nn.functional as F
     import torchvision.transforms as T
     import torch.nn as nn
     from torchvision.models import efficientnet_b0
 
-    if not STAGE2_MODEL.is_file():
-        print(f"Stage 2 model not found: {STAGE2_MODEL}", file=sys.stderr)
+    model_path = _first_existing(STAGE1_MODEL, STAGE1_LEGACY_MODEL)
+    if not model_path.is_file():
+        print(f"Stage 1 model not found: {model_path}", file=sys.stderr)
         return {}
 
     model = efficientnet_b0(weights=None)
-    model.classifier[1] = nn.Linear(model.classifier[1].in_features, _NUM_STAGE2)
-    model.load_state_dict(torch.load(str(STAGE2_MODEL), map_location="cpu", weights_only=True))
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, _NUM_STAGE1)
+    model.load_state_dict(torch.load(str(model_path), map_location="cpu", weights_only=True))
     model.eval()
 
     transform = T.Compose([T.ToPILImage(), T.Resize((224, 224)), T.ToTensor(),
                             T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
-    img_dir = STAGE2_DATA / "images" / split
-    lbl_dir = STAGE2_DATA / "labels" / split
-    run_dir = _make_run_dir("stage2")
+    img_dir = STAGE1_DATA / "images" / split
+    lbl_dir = STAGE1_DATA / "labels" / split
+    run_dir = _make_run_dir("stage1")
 
     rows = []
     y_true: list[str] = []
@@ -426,14 +439,14 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
     confidences: list[float] = []
     correct_flags: list[bool] = []
 
-    prob_fields = [f"{c}_prob" for c in STAGE2_CLASSES]
+    prob_fields = [f"{c}_prob" for c in STAGE1_CLASSES]
 
     for img_path in sorted(img_dir.glob("*.jpg")):
         lbl_path = lbl_dir / f"{img_path.stem}.txt"
         if not lbl_path.is_file():
             continue
         true_int = int(lbl_path.read_text().strip())
-        if true_int >= _NUM_STAGE2:
+        if true_int >= _NUM_STAGE1:
             continue
         img = cv2.imread(str(img_path))
         if img is None:
@@ -442,8 +455,8 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
         with torch.no_grad():
             probs = F.softmax(model(tensor), dim=1)[0]
         pred_int = int(probs.argmax().item())
-        true_lbl = STAGE2_CLASSES[true_int]
-        pred_lbl = STAGE2_CLASSES[pred_int]
+        true_lbl = STAGE1_CLASSES[true_int]
+        pred_lbl = STAGE1_CLASSES[pred_int]
         conf = float(probs[pred_int])
         correct = true_lbl == pred_lbl
 
@@ -461,7 +474,7 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
         subfolder = "correct" if correct else "wrong"
         cv2.imwrite(str(run_dir / "viz" / subfolder / f"{img_path.stem}.jpg"), thumb)
 
-    metrics = _classification_metrics(y_true, y_pred, STAGE2_CLASSES, "stage2", split, str(STAGE2_MODEL))
+    metrics = _classification_metrics(y_true, y_pred, STAGE1_CLASSES, "stage1", split, str(model_path))
     metrics["run_dir"] = str(run_dir)
 
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
@@ -470,7 +483,7 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
         writer.writeheader()
         writer.writerows(rows)
 
-    _save_confusion_matrix(y_true, y_pred, STAGE2_CLASSES, run_dir / "confusion_matrix.png")
+    _save_confusion_matrix(y_true, y_pred, STAGE1_CLASSES, run_dir / "confusion_matrix.png")
     _save_confusion_matrix(
         [t for t in y_true if t in {"screen", "printout", "selfie", "back", "garbage"}],
         [p for t, p in zip(y_true, y_pred) if t in {"screen", "printout", "selfie", "back", "garbage"}],
@@ -486,37 +499,38 @@ def evaluate_stage2(split: str = "val", threshold: float = 0.5) -> dict:
     return metrics
 
 
-# ── Stage 4 — ID type classifier ─────────────────────────────────────────────
+# ── Stage 3 — ID type classifier ─────────────────────────────────────────────
 
-def evaluate_stage4(split: str = "val") -> dict:
+def evaluate_stage3(split: str = "val") -> dict:
     import torch
     import torch.nn.functional as F
     import torchvision.transforms as T
     import torch.nn as nn
     from torchvision.models import EfficientNet_B0_Weights, efficientnet_b0
 
-    if not STAGE4_MODEL.is_file():
-        print(f"Stage 4 model not found: {STAGE4_MODEL}", file=sys.stderr)
+    model_path = _first_existing(STAGE3_MODEL, STAGE3_LEGACY_MODEL)
+    if not model_path.is_file():
+        print(f"Stage 3 model not found: {model_path}", file=sys.stderr)
         return {}
 
     model = efficientnet_b0(weights=None)
-    model.classifier[1] = nn.Linear(model.classifier[1].in_features, len(STAGE4_CLASSES))
-    model.load_state_dict(torch.load(str(STAGE4_MODEL), map_location="cpu", weights_only=True))
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, len(STAGE3_CLASSES))
+    model.load_state_dict(torch.load(str(model_path), map_location="cpu", weights_only=True))
     model.eval()
 
     transform = T.Compose([T.ToPILImage(), T.Resize((224, 224)), T.ToTensor(),
                             T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
-    split_dir = STAGE4_DATA / split
-    run_dir = _make_run_dir("stage4")
+    split_dir = STAGE3_DATA / split
+    run_dir = _make_run_dir("stage3")
 
     rows = []
     y_true: list[str] = []
     y_pred: list[str] = []
     confidences: list[float] = []
     correct_flags: list[bool] = []
-    class_samples: dict[str, list[np.ndarray]] = {c: [] for c in STAGE4_CLASSES}
+    class_samples: dict[str, list[np.ndarray]] = {c: [] for c in STAGE3_CLASSES}
 
-    for cls_idx, cls in enumerate(STAGE4_CLASSES):
+    for cls_idx, cls in enumerate(STAGE3_CLASSES):
         cls_dir = split_dir / cls
         if not cls_dir.is_dir():
             continue
@@ -528,7 +542,7 @@ def evaluate_stage4(split: str = "val") -> dict:
             with torch.no_grad():
                 probs = F.softmax(model(tensor), dim=1)[0].numpy()
             pred_idx = int(np.argmax(probs))
-            pred_cls = STAGE4_CLASSES[pred_idx]
+            pred_cls = STAGE3_CLASSES[pred_idx]
             conf = float(probs[pred_idx])
             correct = pred_cls == cls
 
@@ -551,7 +565,7 @@ def evaluate_stage4(split: str = "val") -> dict:
                 subfolder = "correct" if correct else "wrong"
                 cv2.imwrite(str(run_dir / "viz" / subfolder / f"{cls}_{img_path.stem}.jpg"), thumb)
 
-    metrics = _classification_metrics(y_true, y_pred, STAGE4_CLASSES, "stage4", split, str(STAGE4_MODEL))
+    metrics = _classification_metrics(y_true, y_pred, STAGE3_CLASSES, "stage3", split, str(model_path))
     metrics["run_dir"] = str(run_dir)
 
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
@@ -560,7 +574,7 @@ def evaluate_stage4(split: str = "val") -> dict:
         w2.writeheader()
         w2.writerows(rows)
 
-    _save_confusion_matrix(y_true, y_pred, STAGE4_CLASSES, run_dir / "confusion_matrix.png")
+    _save_confusion_matrix(y_true, y_pred, STAGE3_CLASSES, run_dir / "confusion_matrix.png")
     _save_confidence_hist(confidences, correct_flags, run_dir / "confidence_hist.png")
     _save_per_class_grid(class_samples, run_dir / "per_class_grid.png")
 
@@ -647,7 +661,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate pipeline models")
     parser.add_argument(
         "--stage",
-        choices=["stage1", "stage2", "stage4", "all"],
+        choices=[
+            "stage1", "stage2", "stage3", "all",
+            "quality_gate", "corners", "id_type",
+            "legacy_stage1", "legacy_stage2", "legacy_stage4",
+        ],
         default="all",
         help="Which model to evaluate (default: all)",
     )
@@ -658,9 +676,9 @@ def main() -> int:
         help="Data split to use (default: val)",
     )
     parser.add_argument("--threshold", type=float, default=0.5,
-                        help="Stage 2 classification threshold (default: 0.5)")
+                        help="Stage 1 classification threshold (default: 0.5)")
     parser.add_argument("--max-viz", type=int, default=20,
-                        help="Max corner visualisation images for Stage 1 (default: 20)")
+                        help="Max corner visualisation images for Stage 2 (default: 20)")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -677,19 +695,28 @@ def main() -> int:
 
     ran_any = False
 
-    if args.stage in ("stage1", "all"):
-        print("\n--- Stage 1: Corner detection ---")
-        evaluate_stage1(split=args.split, max_viz=args.max_viz)
+    stage = {
+        "quality_gate": "stage1",
+        "corners": "stage2",
+        "id_type": "stage3",
+        "legacy_stage2": "stage1",
+        "legacy_stage1": "stage2",
+        "legacy_stage4": "stage3",
+    }.get(args.stage, args.stage)
+
+    if stage in ("stage1", "all"):
+        print("\n--- Stage 1: Quality gate ---")
+        evaluate_stage1(split=args.split, threshold=args.threshold)
         ran_any = True
 
-    if args.stage in ("stage2", "all"):
-        print("\n--- Stage 2: Screen classifier ---")
-        evaluate_stage2(split=args.split, threshold=args.threshold)
+    if stage in ("stage2", "all"):
+        print("\n--- Stage 2: Corner detection ---")
+        evaluate_stage2(split=args.split, max_viz=args.max_viz)
         ran_any = True
 
-    if args.stage in ("stage4", "all"):
-        print("\n--- Stage 4: ID type classifier ---")
-        evaluate_stage4(split=args.split)
+    if stage in ("stage3", "all"):
+        print("\n--- Stage 3: ID type classifier ---")
+        evaluate_stage3(split=args.split)
         ran_any = True
 
     if not ran_any:

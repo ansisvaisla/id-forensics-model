@@ -4,8 +4,8 @@ Architecture
 ────────────
 Google Drive (persistent across sessions):
     My Drive/id-forensics/
-        data/raw/id_doc_front_flat/   ← stage1/4 labeled images, synced from S3 once
-        data/screen_images/           ← stage2 quality gate images, cached from S3 once
+        data/raw/id_doc_front_flat/   ← Stage 2/3 labeled images, synced from S3 once
+        data/screen_images/           ← Stage 1 quality gate images, cached from S3 once
         outputs/                       ← trained weights
         eval/                            ← evaluation reports + viz images
 
@@ -44,7 +44,7 @@ from pathlib import Path
 DRIVE_FOLDER = "id-forensics"
 DRIVE_ROOT = Path(f"/content/drive/MyDrive/{DRIVE_FOLDER}")
 DRIVE_RAW_DIR = DRIVE_ROOT / "data" / "raw" / "id_doc_front_flat"
-DRIVE_SCREEN_DIR = DRIVE_ROOT / "data" / "screen_images"  # stage2 image cache
+DRIVE_SCREEN_DIR = DRIVE_ROOT / "data" / "screen_images"  # Stage 1 image cache
 OUTPUTS_DIR = DRIVE_ROOT / "outputs"
 EVAL_DIR = DRIVE_ROOT / "eval"
 DRIVE_BATCHES_DIR = DRIVE_ROOT / "data" / "batches"
@@ -57,9 +57,19 @@ S3_BUCKET = "sf-zenka-ke-prod-media-svc"
 S3_PREFIX = "id-doc-front/"
 
 WEIGHT_TARGETS: dict[str, tuple[str, str]] = {
-    "stage1": ("models/stage1_corners/weights/best.pt", "stage1_best.pt"),
-    "stage2": ("models/stage2_screen/best.pt", "stage2_best.pt"),
-    "stage4": ("models/stage4_id_type/best.pt", "stage4_best.pt"),
+    "stage1": ("models/stage1_quality_gate/best.pt", "stage1_quality_gate_best.pt"),
+    "stage2": ("models/stage2_corners/weights/best.pt", "stage2_corners_best.pt"),
+    "stage3": ("models/stage3_id_type/best.pt", "stage3_id_type_best.pt"),
+    # Backward-compatible aliases for older notebooks/artifacts.
+    "legacy_stage1": ("models/stage1_corners/weights/best.pt", "stage1_best.pt"),
+    "legacy_stage2": ("models/stage2_screen/best.pt", "stage2_best.pt"),
+    "legacy_stage4": ("models/stage4_id_type/best.pt", "stage4_best.pt"),
+}
+
+WEIGHT_DRIVE_FALLBACKS: dict[str, tuple[str, ...]] = {
+    "stage1": ("stage2_best.pt",),
+    "stage2": ("stage1_best.pt",),
+    "stage3": ("stage4_best.pt",),
 }
 
 
@@ -381,19 +391,26 @@ def restore_weights(stage: str) -> bool:
 
     src = OUTPUTS_DIR / drive_name
     if not src.is_file():
+        for fallback_name in WEIGHT_DRIVE_FALLBACKS.get(stage, ()):
+            fallback = OUTPUTS_DIR / fallback_name
+            if fallback.is_file():
+                src = fallback
+                print(f"{stage}: using legacy Drive artifact {fallback_name}")
+                break
+    if not src.is_file():
         print(f"WARNING: {stage} weights not found on Drive ({src}). Train this stage first.")
         return False
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     import shutil
     shutil.copy2(src, dst)
-    print(f"{stage}: restored {drive_name} from Drive ({dst.stat().st_size / 1e6:.1f} MB)")
+    print(f"{stage}: restored {src.name} from Drive ({dst.stat().st_size / 1e6:.1f} MB)")
     return True
 
 
 def restore_all_weights() -> None:
     """Restore all available stage weights from Drive. Prints a summary."""
-    for stage in WEIGHT_TARGETS:
+    for stage in ("stage1", "stage2", "stage3"):
         restore_weights(stage)
 
 

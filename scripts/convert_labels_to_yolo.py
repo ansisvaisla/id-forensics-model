@@ -68,7 +68,7 @@ SCREEN_NEGATIVE_QUALITY = {"good_front", "partial", "blurry", "back", "selfie"}
 SCREEN_POSITIVE_QUALITY = {"screen"}
 PRINTOUT_QUALITY = {"printout"}
 
-# Stage 2 class indices
+# Legacy Stage 1 quality-gate class indices
 # 0 = screen  1 = printout  2 = live
 STAGE2_CLASSES = ("screen", "printout", "live")
 
@@ -277,7 +277,7 @@ def convert_corners(tasks: list[dict], image_index: dict[str, Path], dry_run: bo
 
 
 def convert_screen(tasks: list[dict], image_index: dict[str, Path], dry_run: bool = False) -> None:
-    """Export Stage 2 classification dataset (3-class: screen=0, printout=1, live=2)."""
+    """Export legacy Stage 1 quality-gate dataset (screen=0, printout=1, live=2)."""
     out_images = YOLO_SCREEN_DIR / "images" / "all"
     out_labels = YOLO_SCREEN_DIR / "labels" / "all"
     if not dry_run:
@@ -329,7 +329,7 @@ def convert_screen(tasks: list[dict], image_index: dict[str, Path], dry_run: boo
         _write_screen_yaml()
 
     print(
-        f"Stage 2: screen={counts[0]}, printout={counts[1]}, live={counts[2]}, "
+        f"Stage 1 quality gate: screen={counts[0]}, printout={counts[1]}, live={counts[2]}, "
         f"skipped={skipped}"
     )
 

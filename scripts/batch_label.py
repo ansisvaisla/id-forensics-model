@@ -278,7 +278,7 @@ def _to_ls_predictions(result) -> list[dict]:
              "value": {"choices": [id_type_label]}}
         )
 
-    # Corner polygon for live images where Stage 1 detected 4 keypoints.
+    # Corner polygon for live images where Stage 2 detected 4 keypoints.
     # Stored as polygonlabels so convert_labels_to_yolo.py can read them directly.
     if quality in _LIVE_QUALITIES and result.crop is not None:
         if result.crop.corners_pct is not None and len(result.crop.corners_pct) == 4:

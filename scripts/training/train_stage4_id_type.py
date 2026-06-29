@@ -1,4 +1,4 @@
-"""Train Stage 4 — ID Type Classifier (EfficientNet-B0, 7-class).
+"""Train Stage 3 — ID Type Classifier (EfficientNet-B0, 7-class).
 
 Uses ImageFolder structure built by convert_labels_to_yolo.py:
     data/id_type/
@@ -16,7 +16,7 @@ Classes (by index):
     6 unknown_id       - unrecognisable / unclear
 
 Data split is produced by scripts/split_id_type_dataset.py.
-The output weights file is models/stage4_id_type/best.pt.
+The output weights file is models/stage3_id_type/best.pt.
 
 Usage:
     python scripts/training/train_stage4_id_type.py
@@ -34,7 +34,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data" / "id_type"
-OUTPUT_DIR = PROJECT_ROOT / "models" / "stage4_id_type"
+OUTPUT_DIR = PROJECT_ROOT / "models" / "stage3_id_type"
 
 CLASSES = (
     "legacy",
@@ -100,7 +100,7 @@ def _build_dataset(split: str, augment: bool):
             first = self.samples[0][0].resolve()
             if "/content/drive" not in str(first):
                 return
-            local_dir = Path(tempfile.mkdtemp(prefix="stage4_imgs_"))
+            local_dir = Path(tempfile.mkdtemp(prefix="stage3_id_type_imgs_"))
             print(f"  Copying {len(self.samples)} images to local disk ({local_dir}) ...")
             new_samples = []
             for img_path, label in self.samples:
@@ -159,7 +159,7 @@ def _compute_class_weights(train_ds) -> "torch.Tensor":
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Train Stage 4 ID type classifier")
+    parser = argparse.ArgumentParser(description="Train Stage 3 ID type classifier")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch", type=int, default=_BATCH)
     parser.add_argument("--lr", type=float, default=_LR)

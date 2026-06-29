@@ -1,23 +1,22 @@
-"""Stage 7 — Orchestration & Shadow Mode Decision Matrix.
+"""Orchestration & Shadow Mode Decision Matrix.
 
 Entry point: run(image_bytes) -> PipelineResult
 
 Pipeline order
 ──────────────
-1. quality_gate  — 8-class quality/attack classifier on the raw image.
+1. quality_gate  — Stage 1, 8-class quality/attack classifier on the raw image.
                    Rejects: screen | printout | selfie | back | garbage → stop.
                    Live:    good_front | partial | blurry → proceed.
-2. id_crop       — YOLO corner detection, warp, orientation correction.
-3. tampering     — ELA + EXIF analysis.
-4. id_type       — 8-class ID type classifier on cropped image.
-5. field_extract — AWS Textract OCR (skipped in shadow mode if env var set).
+2. id_crop       — Stage 2, YOLO corner detection, warp, orientation correction.
+3. id_type       — Stage 3, 7-class ID type classifier on cropped image.
+4. field_extract — Stage 4, field localization + OCR.
 
 Phase 1 (shadow mode): all stages run asynchronously and write scores only.
 They NEVER block or modify the user journey. Every stage call is wrapped in
 try/except — a model failure is invisible to the end user.
 
 Risk tiers (post-shadow, Phase 2):
-  high_fraud   — ELA tampering or screen replay with high confidence
+  high_fraud   — screen replay with high confidence or experimental tamper flag
   garbage_photo — no ID detected, selfie, blank screen, back of card
   user_error   — partial document, heavy rotation
   clean        — passes all checks
@@ -114,7 +113,7 @@ def run(image_bytes: bytes) -> PipelineResult:
         result.label = result.risk_tier
         return result
 
-    # ── Stage 1: ID Crop (only for live images) ───────────────────────────────
+    # ── Stage 2: ID Crop And Corners (only for live images) ───────────────────
     cropped_image = image
     try:
         import id_crop
@@ -126,7 +125,7 @@ def run(image_bytes: bytes) -> PipelineResult:
     except Exception as exc:
         logger.error("id_crop stage failed: %s", exc)
 
-    # ── Stage 3: Tampering Detection (runs on raw bytes) ─────────────────────
+    # ── Experimental side check: Tampering Detection (runs on raw bytes) ──────
     try:
         import tampering_detection
         tamper_result: TamperingResult = tampering_detection.run(image_bytes)
@@ -135,7 +134,7 @@ def run(image_bytes: bytes) -> PipelineResult:
     except Exception as exc:
         logger.error("tampering_detection stage failed: %s", exc)
 
-    # ── Stage 4: ID Type Classification ──────────────────────────────────────
+    # ── Stage 3: ID Type Classification ──────────────────────────────────────
     try:
         crop_label = result.crop.label if result.crop else None
         from id_crop.quality import crop_ready_for_classification
@@ -153,11 +152,11 @@ def run(image_bytes: bytes) -> PipelineResult:
     except Exception as exc:
         logger.error("id_type stage failed: %s", exc)
 
-    # ── Stage 5: Field Extraction ─────────────────────────────────────────────
+    # ── Stage 4: Field Localization And OCR ──────────────────────────────────
     try:
-        import field_extractor
-        field_result: FieldExtractResult = field_extractor.run(
-            image_bytes, id_type=result.id_type_label
+        import field_localization
+        field_result: FieldExtractResult = field_localization.run(
+            cropped_image, id_type=result.id_type_label
         )
         result.field_extract = field_result
         result.extracted_fields = field_result.extracted_fields

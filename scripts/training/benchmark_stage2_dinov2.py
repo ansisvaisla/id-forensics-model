@@ -1,4 +1,4 @@
-"""Benchmark DINOv2 vs EfficientNet-B0 on the Stage 2 quality-gate dataset.
+"""Benchmark DINOv2 vs EfficientNet-B0 on the Stage 1 quality-gate dataset.
 
 Three approaches are compared head-to-head on the same val split:
 
@@ -15,9 +15,9 @@ Usage:
 
 Output:
     - Side-by-side macro-F1 / accuracy / per-class table printed to stdout
-    - DINOv2 linear probe weights saved to models/stage2_dinov2_linear/best.pt
-    - DINOv2 MLP head weights saved to models/stage2_dinov2_mlp/best.pt
-    - (if --also-finetune) Full fine-tune saved to models/stage2_dinov2_finetune/best.pt
+    - DINOv2 linear probe weights saved to models/stage1_dinov2_linear/best.pt
+    - DINOv2 MLP head weights saved to models/stage1_dinov2_mlp/best.pt
+    - (if --also-finetune) Full fine-tune saved to models/stage1_dinov2_finetune/best.pt
 """
 from __future__ import annotations
 
@@ -31,7 +31,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data" / "yolo" / "screen"
-EFFICIENTNET_WEIGHTS = PROJECT_ROOT / "models" / "stage2_screen" / "best.pt"
+EFFICIENTNET_WEIGHTS = PROJECT_ROOT / "models" / "stage1_quality_gate" / "best.pt"
+EFFICIENTNET_LEGACY_WEIGHTS = PROJECT_ROOT / "models" / "stage2_screen" / "best.pt"
 
 _IMG_SIZE = 224
 _BATCH = 64   # larger batch is fine for frozen backbone (no gradient through it)
@@ -51,7 +52,7 @@ _DINOV2_VARIANTS = {
 # ── Data loading ─────────────────────────────────────────────────────────────
 
 def _build_dataset(split: str, transform):
-    """Build dataset using the same image/label directory structure as train_stage2_screen.py."""
+    """Build dataset using the same image/label directory structure as the quality gate trainer."""
     import cv2  # type: ignore
     import torch  # type: ignore
     from torch.utils.data import Dataset  # type: ignore
@@ -171,8 +172,9 @@ def _compute_metrics(model, loader, device) -> dict:
 # ── EfficientNet evaluation ───────────────────────────────────────────────────
 
 def evaluate_efficientnet(val_loader, device) -> dict | None:
-    if not EFFICIENTNET_WEIGHTS.is_file():
-        print(f"  EfficientNet weights not found at {EFFICIENTNET_WEIGHTS} — skipping.")
+    weights_path = EFFICIENTNET_WEIGHTS if EFFICIENTNET_WEIGHTS.is_file() else EFFICIENTNET_LEGACY_WEIGHTS
+    if not weights_path.is_file():
+        print(f"  EfficientNet weights not found at {weights_path} — skipping.")
         return None
 
     import torch  # type: ignore
@@ -181,7 +183,7 @@ def evaluate_efficientnet(val_loader, device) -> dict | None:
 
     model = efficientnet_b0(weights=None)
     model.classifier[1] = nn.Linear(model.classifier[1].in_features, _NUM_CLASSES)
-    state = torch.load(str(EFFICIENTNET_WEIGHTS), map_location="cpu", weights_only=True)
+    state = torch.load(str(weights_path), map_location="cpu", weights_only=True)
     model.load_state_dict(state)
     model = model.to(device)
     print("  Evaluating EfficientNet-B0 (existing weights)...")
@@ -373,7 +375,7 @@ def train_dinov2_finetune(
 
 def _print_report(results: dict[str, dict]) -> None:
     print("\n" + "=" * 80)
-    print("BENCHMARK RESULTS — Stage 2 Quality Gate")
+    print("BENCHMARK RESULTS — Stage 1 Quality Gate")
     print("=" * 80)
 
     header = f"{'Model':<35} {'Accuracy':>10} {'Macro-F1':>10}"
@@ -420,7 +422,7 @@ def _print_report(results: dict[str, dict]) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Benchmark DINOv2 vs EfficientNet-B0 on Stage 2")
+    parser = argparse.ArgumentParser(description="Benchmark DINOv2 vs EfficientNet-B0 on Stage 1")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--epochs", type=int, default=25,
                         help="Epochs for DINOv2 head training (linear probe converges fast)")
@@ -438,7 +440,7 @@ def main() -> int:
         raw_dev = f"cuda:{raw_dev}"
 
     if not (DATA_DIR / "images" / "train").is_dir():
-        print(f"Stage 2 dataset not found at {DATA_DIR}", file=sys.stderr)
+        print(f"Stage 1 quality-gate dataset not found at {DATA_DIR}", file=sys.stderr)
         print("Run Section 3 in the notebook first.", file=sys.stderr)
         return 1
 
@@ -480,14 +482,14 @@ def main() -> int:
 
     # 2. DINOv2 linear probe
     print(f"\n[2/3] DINOv2-{args.variant} linear probe (frozen backbone)")
-    out_linear = PROJECT_ROOT / "models" / f"stage2_dinov2_{args.variant}_linear"
+    out_linear = PROJECT_ROOT / "models" / f"stage1_dinov2_{args.variant}_linear"
     m = train_dinov2_head(args.variant, "linear", train_loader, val_loader,
                           device, args.epochs, weights, out_linear)
     results[f"DINOv2-{args.variant} linear probe"] = m
 
     # 3. DINOv2 MLP head
     print(f"\n[3/3] DINOv2-{args.variant} MLP head (frozen backbone)")
-    out_mlp = PROJECT_ROOT / "models" / f"stage2_dinov2_{args.variant}_mlp"
+    out_mlp = PROJECT_ROOT / "models" / f"stage1_dinov2_{args.variant}_mlp"
     m = train_dinov2_head(args.variant, "mlp", train_loader, val_loader,
                           device, args.epochs, weights, out_mlp)
     results[f"DINOv2-{args.variant} MLP head"] = m
@@ -495,7 +497,7 @@ def main() -> int:
     # 4. Optional full fine-tune
     if args.also_finetune:
         print(f"\n[4/4] DINOv2-{args.variant} full fine-tune (slow!)")
-        out_ft = PROJECT_ROOT / "models" / f"stage2_dinov2_{args.variant}_finetune"
+        out_ft = PROJECT_ROOT / "models" / f"stage1_dinov2_{args.variant}_finetune"
         m = train_dinov2_finetune(args.variant, train_loader, val_loader,
                                   device, args.epochs, weights, out_ft)
         results[f"DINOv2-{args.variant} fine-tuned"] = m

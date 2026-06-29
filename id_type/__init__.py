@@ -1,10 +1,10 @@
-"""Stage 4 — ID Type Classification.
+"""Stage 3 — ID Type Classification.
 
 Entry point: run(image) -> IdTypeResult
 
 v1: stub returning 'unknown' until model is trained.
 v2: EfficientNet-B0 or ResNet-18 fine-tuned on legacy/maisha/other labels.
-    Requires deskewed (Stage 1 output) image for reliable classification.
+    Requires deskewed/cropped (Stage 2 output) image for reliable classification.
 """
 from __future__ import annotations
 
@@ -15,6 +15,9 @@ import numpy as np
 from orchestration.results import IdTypeResult
 
 MODEL_PATH = (
+    Path(__file__).resolve().parents[1] / "models" / "stage3_id_type" / "best.pt"
+)
+LEGACY_MODEL_PATH = (
     Path(__file__).resolve().parents[1] / "models" / "stage4_id_type" / "best.pt"
 )
 
@@ -38,7 +41,7 @@ def _load_model():
 
     model = tv_models.efficientnet_b0(weights=None)
     model.classifier[1] = nn.Linear(model.classifier[1].in_features, len(KNOWN_TYPES))
-    state = torch.load(str(MODEL_PATH), map_location="cpu", weights_only=True)
+    state = torch.load(str(_model_path()), map_location="cpu", weights_only=True)
     model.load_state_dict(state)
     model.eval()
     return model
@@ -49,6 +52,11 @@ def _get_model():
     if _model is None:
         _model = _load_model()
     return _model
+
+
+def _model_path() -> Path:
+    """Prefer new Stage 3 path, but keep old Stage 4 ID type weights usable."""
+    return MODEL_PATH if MODEL_PATH.is_file() else LEGACY_MODEL_PATH
 
 
 def _preprocess(image: np.ndarray) -> "torch.Tensor":
@@ -69,7 +77,7 @@ def run(image: np.ndarray) -> IdTypeResult:
     """Classify ID type from deskewed card image.
 
     Args:
-        image: BGR numpy array — should be deskewed output from Stage 1.
+        image: BGR numpy array — should be cropped/deskewed output from Stage 2.
 
     Returns:
         IdTypeResult with id_type and confidence.
@@ -81,7 +89,7 @@ def run(image: np.ndarray) -> IdTypeResult:
     if not ok:
         return IdTypeResult(id_type="unknown_id", confidence=0.0)
 
-    if not MODEL_PATH.is_file():
+    if not _model_path().is_file():
         return IdTypeResult(id_type="unknown_id", confidence=0.0)
 
     import torch  # type: ignore

@@ -1,4 +1,4 @@
-"""Tests for Stage 2 — Presentation Attack Detection (stub, no model needed)."""
+"""Tests for deprecated presentation_attack compatibility module."""
 from __future__ import annotations
 
 import io
@@ -28,12 +28,13 @@ def _jpeg_to_bgr(jpeg: bytes):
 def test_stub_returns_result_when_model_missing() -> None:
     """Without a trained model, presentation_attack must return a valid stub result."""
     from presentation_attack import run
-    from orchestration.results import PresentationAttackResult
+    from orchestration.results import QualityGateResult
 
     jpeg = _make_synthetic_jpeg()
     image = _jpeg_to_bgr(jpeg)
     result = run(image)
-    assert isinstance(result, PresentationAttackResult)
+    assert isinstance(result, QualityGateResult)
     assert result.label == "model_not_trained"
+    assert result.is_live is True
     assert result.is_screen_replay is False
     assert result.is_printout is False

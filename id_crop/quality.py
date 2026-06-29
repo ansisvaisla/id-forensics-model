@@ -1,7 +1,7 @@
-"""Crop quality checks for Stage 1 — used at inference, not just training.
+"""Crop quality checks for Stage 2 — used at inference, not just training.
 
 A bad perspective warp can look like a thin colour strip or flat grey block.
-Stage 4 will happily call that 'legacy' at 96% confidence. These checks run
+Stage 3 will happily call that 'legacy' at 96% confidence. These checks run
 after corner detection and after warp so production never passes garbage downstream.
 """
 from __future__ import annotations
@@ -98,7 +98,7 @@ def crop_ready_for_classification(
     image: np.ndarray,
     crop_label: Optional[str] = None,
 ) -> tuple[bool, str]:
-    """Gate for Stage 4 — only classify when Stage 1 succeeded and crop looks real."""
+    """Gate for Stage 3 — only classify when Stage 2 succeeded and crop looks real."""
     success_labels = {"id_card", "id_card_reconstructed", "full_frame_id", "bbox_crop"}
     if crop_label is not None and crop_label not in success_labels:
         return False, f"crop_stage_failed:{crop_label}"

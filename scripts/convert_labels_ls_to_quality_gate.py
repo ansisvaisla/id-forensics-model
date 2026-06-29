@@ -1,7 +1,7 @@
 """Convert Label Studio JSON export → quality gate training dataset.
 
 Reads a Label Studio JSON export and downloads the labelled images from S3,
-writing them into the directory structure expected by train_stage2_screen.py:
+writing them into the directory structure expected by the Stage 1 quality-gate trainer:
 
     data/yolo/screen/
         images/{train,val}/<stem>.jpg
@@ -13,7 +13,7 @@ Usage (run from repo root):
         --out   data/yolo/screen \\
         --val-ratio 0.2
 
-Class mapping (must match train_stage2_screen.py _CLASS_NAMES):
+Class mapping (must match scripts/training/train_stage2_screen.py _CLASS_NAMES):
     0  screen
     1  printout
     2  selfie
@@ -174,7 +174,7 @@ def main() -> int:
     load_dotenv(PROJECT_ROOT / ".env")
 
     parser = argparse.ArgumentParser(
-        description="Convert Label Studio export → quality gate training dataset"
+        description="Convert Label Studio export → Stage 1 quality gate training dataset"
     )
     parser.add_argument("--input", type=Path,
                         default=PROJECT_ROOT / "data" / "labels" / "label_studio_export.json",

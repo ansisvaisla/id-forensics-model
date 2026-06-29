@@ -1,11 +1,11 @@
-"""Stage 1 — ID Crop.
+"""Stage 2 — ID Crop And Corners.
 
 Entry point: run(image) -> IdCropResult
 
 Detection strategy:
-  1. ML bounding-box crop (primary for Stage 4) — detects where the card is,
+  1. ML bounding-box crop (primary for Stage 3) — detects where the card is,
      crops the bbox region. Reliable, never produces face crops or strip artifacts.
-  2. Perspective warp (attempted for Stage 5 OCR quality) — only if ML finds
+  2. Perspective warp (attempted for Stage 4 OCR quality) — only if ML finds
      confident corners AND the quad+warp pass sanity checks.
   3. Full-frame fallback — if card fills >85% of frame, return as-is.
 
@@ -29,7 +29,10 @@ import numpy as np
 from orchestration.results import IdCropResult
 from id_crop.quality import crop_is_plausible, quad_is_sane
 
-MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "stage1_corners" / "weights" / "best.pt"
+MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "stage2_corners" / "weights" / "best.pt"
+LEGACY_MODEL_PATH = (
+    Path(__file__).resolve().parents[1] / "models" / "stage1_corners" / "weights" / "best.pt"
+)
 
 _ID1_ASPECT = 85.6 / 54.0
 
@@ -51,7 +54,7 @@ _ml_model = None
 
 def _load_ml_model():
     from ultralytics import YOLO  # type: ignore
-    return YOLO(str(MODEL_PATH))
+    return YOLO(str(_model_path()))
 
 
 def _get_ml_model():
@@ -61,9 +64,14 @@ def _get_ml_model():
     return _ml_model
 
 
+def _model_path() -> Path:
+    """Prefer new Stage 2 path, but keep old Stage 1 corner weights usable."""
+    return MODEL_PATH if MODEL_PATH.is_file() else LEGACY_MODEL_PATH
+
+
 def _ml_detect(image: np.ndarray) -> tuple[Optional[np.ndarray], float, Optional[np.ndarray]]:
     """Run YOLOv8 Pose model. Returns (corners, box_conf, kpt_conf) or (None, 0, None)."""
-    if not MODEL_PATH.is_file():
+    if not _model_path().is_file():
         return None, 0.0, None
 
     model = _get_ml_model()
