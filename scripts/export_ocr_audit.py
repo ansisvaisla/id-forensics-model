@@ -26,8 +26,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from db_zenka_ke import _connect  # noqa: E402
+from orchestration.results import ExtractedFields  # noqa: E402
+
 from field_localization import run as run_field_localization  # noqa: E402
 from field_localization.providers import from_aws_rekognition_response  # noqa: E402
+
+_REQUIRED_EXTRACTED_FIELDS = ("date_of_issue", "place_of_birth", "serial_number")
 
 DEFAULT_EXPORT = PROJECT_ROOT / "data" / "labels" / "label_studio_export.json"
 DEFAULT_OUT = PROJECT_ROOT / "data" / "eval" / "ocr_audit.csv"
@@ -144,7 +148,25 @@ def _load_ocr_csv(csv_path: Path, keys: list[str]) -> dict[str, dict[str, Any]]:
     return latest
 
 
+def _verify_extracted_fields_schema() -> None:
+    missing = [
+        name for name in _REQUIRED_EXTRACTED_FIELDS
+        if name not in ExtractedFields.__dataclass_fields__
+    ]
+    if missing:
+        raise RuntimeError(
+            "Stale orchestration.results.ExtractedFields on this runtime. "
+            f"Missing: {missing}. Run `git pull` in Colab section 1/8, then "
+            "Runtime → Restart session and re-run section 8."
+        )
+
+
+def _field_value(fields: ExtractedFields, name: str) -> str | None:
+    return getattr(fields, name, None)
+
+
 def main() -> int:
+    _verify_extracted_fields_schema()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--label-export", type=Path, default=DEFAULT_EXPORT)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
@@ -181,6 +203,8 @@ def main() -> int:
         "sex", "date_of_birth", "date_of_issue", "place_of_birth", "nationality",
     ]
     found_count = 0
+    parsed_count = 0
+    error_count = 0
     with args.out.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
@@ -190,29 +214,44 @@ def main() -> int:
                 writer.writerow({**task, "ocr_found": False, "ocr_word_count": 0})
                 continue
             found_count += 1
-            words = from_aws_rekognition_response(ocr_row["response_summary_json"])
-            result = run_field_localization(dummy_image, id_type=task["id_type"], ocr_words=words)
-            fields = result.extracted_fields
-            writer.writerow({
-                **task,
-                "ocr_found": True,
-                "ocr_word_count": len(words),
-                "label": result.label,
-                "confidence": round(result.field_extraction_confidence, 4),
-                "id_number": fields.id_number,
-                "serial_number": fields.serial_number,
-                "name": fields.name,
-                "surname": fields.surname,
-                "sex": fields.sex,
-                "date_of_birth": fields.date_of_birth,
-                "date_of_issue": fields.date_of_issue,
-                "place_of_birth": fields.place_of_birth,
-                "nationality": fields.nationality,
-            })
+            try:
+                words = from_aws_rekognition_response(ocr_row["response_summary_json"])
+                result = run_field_localization(
+                    dummy_image, id_type=task["id_type"], ocr_words=words,
+                )
+                fields = result.extracted_fields
+                writer.writerow({
+                    **task,
+                    "ocr_found": True,
+                    "ocr_word_count": len(words),
+                    "label": result.label,
+                    "confidence": round(result.field_extraction_confidence, 4),
+                    "id_number": _field_value(fields, "id_number"),
+                    "serial_number": _field_value(fields, "serial_number"),
+                    "name": _field_value(fields, "name"),
+                    "surname": _field_value(fields, "surname"),
+                    "sex": _field_value(fields, "sex"),
+                    "date_of_birth": _field_value(fields, "date_of_birth"),
+                    "date_of_issue": _field_value(fields, "date_of_issue"),
+                    "place_of_birth": _field_value(fields, "place_of_birth"),
+                    "nationality": _field_value(fields, "nationality"),
+                })
+                parsed_count += 1
+            except Exception as exc:
+                error_count += 1
+                print(f"PARSE ERROR {task['s3_key']}: {exc}", file=sys.stderr)
+                writer.writerow({
+                    **task,
+                    "ocr_found": True,
+                    "ocr_word_count": 0,
+                    "label": "failed",
+                    "confidence": 0.0,
+                })
 
     print(
         f"OCR audit written: {args.out} "
-        f"({len(tasks)} candidate rows, {found_count} with OCR)"
+        f"({len(tasks)} candidate rows, {found_count} with OCR, "
+        f"{parsed_count} parsed, {error_count} errors)"
     )
     return 0
 

@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import re
+from dataclasses import fields as dc_fields
 from dataclasses import replace
 
 from orchestration.results import ExtractedFields
+
+_EXTRACTED_FIELD_NAMES = {field.name for field in dc_fields(ExtractedFields)}
 
 from field_localization.providers import OCRWord
 
@@ -48,20 +51,27 @@ def _fill_from_zones(fields: ExtractedFields, grouped: dict[str, list[OCRWord]])
     sex_text = words_to_text(grouped.get("sex", []))
     sex = _normalise_sex(_first_match(_SEX_RE, sex_text) or _first_match(_SEX_RE, all_text))
 
-    return replace(
-        fields,
-        id_number=fields.id_number or id_number,
-        name=fields.name or _clean_name(words_to_text(grouped.get("name", []))),
-        surname=fields.surname or _clean_name(words_to_text(grouped.get("surname", []))),
-        sex=fields.sex or sex,
-        date_of_birth=fields.date_of_birth or dob,
-        date_of_issue=fields.date_of_issue or issue,
-        place_of_birth=fields.place_of_birth or _clean_name(
+    updates = {
+        "id_number": getattr(fields, "id_number", None) or id_number,
+        "name": getattr(fields, "name", None) or _clean_name(
+            words_to_text(grouped.get("name", []))
+        ),
+        "surname": getattr(fields, "surname", None) or _clean_name(
+            words_to_text(grouped.get("surname", []))
+        ),
+        "sex": getattr(fields, "sex", None) or sex,
+        "date_of_birth": getattr(fields, "date_of_birth", None) or dob,
+        "date_of_issue": getattr(fields, "date_of_issue", None) or issue,
+        "place_of_birth": getattr(fields, "place_of_birth", None) or _clean_name(
             words_to_text(grouped.get("place_of_birth", []))
         ),
-        serial_number=fields.serial_number or _first_match(
+        "serial_number": getattr(fields, "serial_number", None) or _first_match(
             _ID_RE, words_to_text(grouped.get("serial_number", []))
         ),
+    }
+    return replace(
+        fields,
+        **{key: value for key, value in updates.items() if key in _EXTRACTED_FIELD_NAMES},
     )
 
 
